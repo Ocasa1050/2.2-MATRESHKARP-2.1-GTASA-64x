@@ -1,0 +1,82 @@
+name: Build MATRESHKARP
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK + NDK
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+          sdkmanager --licenses < /dev/null || true
+
+      - name: Create debug keystore (replace edgar.jks)
+        run: |
+          keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, S=Debug, C=US"
+
+      - name: Create fake google-services.json
+        run: |
+          mkdir -p app/
+          cat > app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "123456789",
+              "project_id": "fake-project",
+              "storage_bucket": "fake-project.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789:android:1234567890abcdef",
+                  "android_client_info": {
+                    "package_name": "ru.edgar.space"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "fake-api-key"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "status": 1
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Build release APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean assembleRelease --no-daemon --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: matreshka-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
