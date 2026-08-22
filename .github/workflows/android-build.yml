@@ -32,6 +32,7 @@ jobs:
 
       - name: Create debug keystore (replace edgar.jks)
         run: |
+          rm -f app/edgar.jks
           keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, S=Debug, C=US"
 
       - name: Create fake google-services.json
