@@ -41,28 +41,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Fix root build.gradle - replace jcenter
+      - name: Write correct root build.gradle
         run: |
-          sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+          cat > build.gradle << 'EOF'
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url 'https://artifacts.applovin.com/android' }
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.2.1'
+                  classpath 'com.google.gms:google-services:4.3.15'
+                  classpath 'com.google.firebase:firebase-crashlytics-gradle:2.2.0'
+              }
+          }
 
-      - name: Fix app build.gradle - remove allprojects block
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url 'https://jitpack.io' }
+                  maven { url 'https://artifacts.applovin.com/android' }
+                  maven { url 'https://artifact.bytedance.com/repository/Volcengine/' }
+                  maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+              }
+          }
+          EOF
+          echo "Wrote root build.gradle"
+
+      - name: Fix app build.gradle
         run: |
+          # Remove the misplaced allprojects block line
           grep -v "allprojects {repositories {maven { url" app/build.gradle > app/build.gradle.tmp
           mv app/build.gradle.tmp app/build.gradle
-
-      - name: Fix app build.gradle - remove paranoid plugin
-        run: |
+          # Remove paranoid from dependencies
           grep -v "com.joom.paranoid:paranoid-gradle-plugin" app/build.gradle > app/build.gradle.tmp
           mv app/build.gradle.tmp app/build.gradle
-
-      - name: Add shadowhook maven repo to root build.gradle
-        run: |
-          if ! grep -q "artifact.bytedance.com" build.gradle; then
-            sed -i "/maven { url 'https:\/\/artifacts.applovin.com\/android' }/a\\        maven { url 'https:\/\/artifact.bytedance.com\/repository\/Volcengine\/' }" build.gradle
-            echo "Added shadowhook repo"
-          else
-            echo "Shadowhook repo already exists"
-          fi
+          echo "Fixed app/build.gradle"
 
       - name: Verify google-services.json
         run: |
@@ -116,3 +132,13 @@ jobs:
             debug-build.log
             release-build.log
           retention-days: 7
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "========== BUILD SUMMARY =========="
+          echo "--- Debug APK ---"
+          ls -lh app/build/outputs/apk/debug/*.apk 2>/dev/null || echo "DEBUG APK: NOT BUILT"
+          echo "--- Release APK ---"
+          ls -lh app/build/outputs/apk/release/*.apk 2>/dev/null || echo "RELEASE APK: NOT BUILT"
+          echo "==================================="
