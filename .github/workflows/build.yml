@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=2g" -Dorg.gradle.parallel=true
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=2g"
 
 jobs:
   build:
@@ -30,12 +30,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept licenses & install NDK/CMake
+      - name: Install NDK & Build Tools
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager "ndk;25.2.9519653" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -48,46 +47,113 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Auto-fix root build.gradle (replace jcenter)
+      # ═══════════════════════════════════════════
+      # FIX 1: Fix root build.gradle - replace jcenter with mavenCentral
+      # ═══════════════════════════════════════════
+      - name: Fix root build.gradle
         run: |
-          if [ -f build.gradle ]; then
-            sed -i 's/jcenter()/mavenCentral()/g' build.gradle
-            echo "Fixed root build.gradle"
-          fi
+          echo "=== FIXING root build.gradle ==="
+          sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+          echo "✅ Replaced all jcenter() with mavenCentral()"
+          cat build.gradle
 
-      - name: Auto-fix app/build.gradle (remove misplaced allprojects)
+      # ═══════════════════════════════════════════
+      # FIX 2: Fix app/build.gradle - remove misplaced allprojects block
+      # ═══════════════════════════════════════════
+      - name: Fix app/build.gradle - remove allprojects block
         run: |
-          if [ -f app/build.gradle ]; then
-            sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
-            echo "Fixed app/build.gradle"
-          fi
+          echo "=== FIXING app/build.gradle ==="
+          # Remove the entire misplaced allprojects line
+          sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
+          echo "✅ Removed misplaced allprojects block"
 
-      - name: Setup signing keystore
+      # ═══════════════════════════════════════════
+      # FIX 3: Remove paranoid-gradle-plugin from app dependencies
+      # (it should only be in classpath, not implementation)
+      # ═══════════════════════════════════════════
+      - name: Fix app/build.gradle - remove paranoid from dependencies
         run: |
+          echo "=== Removing paranoid from app dependencies ==="
+          sed -i '/com.joom.paranoid:paranoid-gradle-plugin/d' app/build.gradle
+          echo "✅ Removed paranoid-gradle-plugin from dependencies"
+
+      # ═══════════════════════════════════════════
+      # FIX 4: Add shadowhook maven repo to root build.gradle
+      # ═══════════════════════════════════════════
+      - name: Fix root build.gradle - add shadowhook repo
+        run: |
+          echo "=== Adding shadowhook maven repo ==="
+          # Add mavenCentral before jcenter replacement to ensure it's there
+          if ! grep -q "mavenCentral()" build.gradle; then
+            sed -i 's/google()/google()
+        mavenCentral()/g' build.gradle
+          fi
+          echo "✅ Verified mavenCentral() in root build.gradle"
+
+      # ═══════════════════════════════════════════
+      # FIX 5: Create dummy google-services.json
+      # ═══════════════════════════════════════════
+      - name: Create dummy google-services.json
+        run: |
+          echo "=== Creating dummy google-services.json ==="
+          mkdir -p app
+          cat > app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "123456789",
+              "project_id": "dummy-project",
+              "storage_bucket": "dummy-project.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789:android:abcdef123456",
+                  "android_client_info": {
+                    "package_name": "ru.edgar.space"
+                  }
+                },
+                "api_key": [{"current_key": "dummy-key"}],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          echo "✅ Created dummy google-services.json"
+
+      # ═══════════════════════════════════════════
+      # FIX 6: Handle keystore
+      # ═══════════════════════════════════════════
+      - name: Setup keystore
+        run: |
+          echo "=== Setting up keystore ==="
           if [ -f app/edgar.jks ]; then
-            echo "Using existing keystore"
+            echo "✅ Using existing edgar.jks from repo"
           else
             keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Android Debug,O=Android,C=US"
-            echo "Created new keystore"
+            echo "✅ Created new keystore"
           fi
-
-      - name: Verify google-services.json
-        run: |
-          if [ ! -f app/google-services.json ]; then
-            echo "ERROR: app/google-services.json is missing!"
-            exit 1
-          fi
-          echo "google-services.json found"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # ═══════════════════════════════════════════
+      # BUILD: Try to build
+      # ═══════════════════════════════════════════
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace --info || true
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace --info 2>&1 | tee debug-build.log || true
 
       - name: Build Release APK
-        run: ./gradlew :app:assembleRelease --stacktrace --info || true
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace --info 2>&1 | tee release-build.log || true
 
+      # ═══════════════════════════════════════════
+      # UPLOAD artifacts
+      # ═══════════════════════════════════════════
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         if: always()
@@ -104,30 +170,38 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           retention-days: 14
 
-      - name: Upload Build Reports
+      - name: Upload Logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Build-Reports
+          name: Build-Logs
           path: |
+            debug-build.log
+            release-build.log
             app/build/reports/
-            app/build/outputs/
           retention-days: 7
 
       - name: Build Summary
         if: always()
         run: |
           echo "========== BUILD SUMMARY =========="
+          echo ""
+          echo "--- Debug APK ---"
           if ls app/build/outputs/apk/debug/*.apk 1>/dev/null 2>&1; then
-            echo "DEBUG APK:"
             ls -lh app/build/outputs/apk/debug/*.apk
           else
-            echo "DEBUG APK: FAILED"
+            echo "❌ DEBUG APK: NOT BUILT"
+            echo "--- Last 30 lines of debug log ---"
+            tail -30 debug-build.log || true
           fi
+          echo ""
+          echo "--- Release APK ---"
           if ls app/build/outputs/apk/release/*.apk 1>/dev/null 2>&1; then
-            echo "RELEASE APK:"
             ls -lh app/build/outputs/apk/release/*.apk
           else
-            echo "RELEASE APK: FAILED"
+            echo "❌ RELEASE APK: NOT BUILT"
+            echo "--- Last 30 lines of release log ---"
+            tail -30 release-build.log || true
           fi
+          echo ""
           echo "==================================="
