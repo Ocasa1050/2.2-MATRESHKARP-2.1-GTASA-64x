@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" -Dorg.gradle.parallel=false
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
 
 jobs:
   build:
@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -28,12 +26,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK & Build Tools
+      - name: Install NDK and Build Tools
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager "ndk;25.2.9519653" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -41,25 +37,45 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-            ~/.android/build-cache
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
       - name: Fix root build.gradle
-        run: |
-          sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+        run: sed -i "s/jcenter()/mavenCentral()/g" build.gradle
 
-      - name: Fix app/build.gradle
+      - name: Fix app build.gradle - remove allprojects block
         run: |
-          sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
-          sed -i '/com.joom.paranoid:paranoid-gradle-plugin/d' app/build.gradle
+          grep -v "allprojects {repositories {maven { url" app/build.gradle > app/build.gradle.tmp
+          mv app/build.gradle.tmp app/build.gradle
 
-      - name: Create dummy google-services.json
+      - name: Fix app build.gradle - remove paranoid plugin
         run: |
-          mkdir -p app
-          printf '%s
-' '{' '  "project_info": {' '    "project_number": "123456789",' '    "project_id": "dummy-project",' '    "storage_bucket": "dummy-project.appspot.com"' '  },' '  "client": [' '    {' '      "client_info": {' '        "mobilesdk_app_id": "1:123456789:android:abcdef123456",' '        "android_client_info": {' '          "package_name": "ru.edgar.space"' '        }' '      },' '      "api_key": [{"current_key": "dummy-key"}],' '      "services": {' '        "appinvite_service": {' '          "other_platform_oauth_client": []' '        }' '      }' '    }' '  ]' '}' > app/google-services.json
+          grep -v "com.joom.paranoid:paranoid-gradle-plugin" app/build.gradle > app/build.gradle.tmp
+          mv app/build.gradle.tmp app/build.gradle
+
+      - name: Add shadowhook maven repo
+        run: |
+          python3 -c "
+          import sys
+          with open('build.gradle', 'r') as f:
+              content = f.read()
+          if 'artifact.bytedance.com' not in content:
+              content = content.replace("maven { url 'https://artifacts.applovin.com/android' }", "maven { url 'https://artifacts.applovin.com/android' }\n        maven { url 'https://artifact.bytedance.com/repository/Volcengine/' }")
+              with open('build.gradle', 'w') as f:
+                  f.write(content)
+              print('Added shadowhook repo')
+          else:
+              print('Shadowhook repo already exists')
+          "
+
+      - name: Verify google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "ERROR: app/google-services.json is missing!"
+            exit 1
+          fi
+          echo "google-services.json found"
 
       - name: Setup keystore
         run: |
@@ -73,12 +89,12 @@ jobs:
       - name: Build Debug APK
         timeout-minutes: 45
         run: |
-          ./gradlew :app:assembleDebug --no-daemon --max-workers=2 --build-cache -x test -x lint --stacktrace 2>&1 | tee debug-build.log || true
+          ./gradlew :app:assembleDebug --no-daemon --max-workers=2 -x test -x lint --stacktrace 2>&1 | tee debug-build.log || true
 
       - name: Build Release APK
         timeout-minutes: 45
         run: |
-          ./gradlew :app:assembleRelease --no-daemon --max-workers=2 --build-cache -x test -x lint --stacktrace 2>&1 | tee release-build.log || true
+          ./gradlew :app:assembleRelease --no-daemon --max-workers=2 -x test -x lint --stacktrace 2>&1 | tee release-build.log || true
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -105,13 +121,3 @@ jobs:
             debug-build.log
             release-build.log
           retention-days: 7
-
-      - name: Build Summary
-        if: always()
-        run: |
-          echo "========== BUILD SUMMARY =========="
-          echo "--- Debug APK ---"
-          ls -lh app/build/outputs/apk/debug/*.apk 2>/dev/null || echo "DEBUG APK: NOT BUILT"
-          echo "--- Release APK ---"
-          ls -lh app/build/outputs/apk/release/*.apk 2>/dev/null || echo "RELEASE APK: NOT BUILT"
-          echo "==================================="
