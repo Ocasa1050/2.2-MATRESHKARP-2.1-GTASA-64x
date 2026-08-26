@@ -47,102 +47,66 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # ═══════════════════════════════════════════
-      # FIX 1: Fix root build.gradle - replace jcenter with mavenCentral
-      # ═══════════════════════════════════════════
-      - name: Fix root build.gradle
+      - name: Fix root build.gradle - replace jcenter
         run: |
           echo "=== FIXING root build.gradle ==="
           sed -i 's/jcenter()/mavenCentral()/g' build.gradle
-          echo "✅ Replaced all jcenter() with mavenCentral()"
-          cat build.gradle
+          echo "Done"
 
-      # ═══════════════════════════════════════════
-      # FIX 2: Fix app/build.gradle - remove misplaced allprojects block
-      # ═══════════════════════════════════════════
       - name: Fix app/build.gradle - remove allprojects block
         run: |
           echo "=== FIXING app/build.gradle ==="
-          # Remove the entire misplaced allprojects line
           sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
-          echo "✅ Removed misplaced allprojects block"
+          echo "Done"
 
-      # ═══════════════════════════════════════════
-      # FIX 3: Remove paranoid-gradle-plugin from app dependencies
-      # (it should only be in classpath, not implementation)
-      # ═══════════════════════════════════════════
-      - name: Fix app/build.gradle - remove paranoid from dependencies
+      - name: Fix app/build.gradle - remove paranoid plugin
         run: |
-          echo "=== Removing paranoid from app dependencies ==="
+          echo "=== Removing paranoid from dependencies ==="
           sed -i '/com.joom.paranoid:paranoid-gradle-plugin/d' app/build.gradle
-          echo "✅ Removed paranoid-gradle-plugin from dependencies"
+          echo "Done"
 
-      # ═══════════════════════════════════════════
-      # FIX 4: Add shadowhook maven repo to root build.gradle
-      # ═══════════════════════════════════════════
-      - name: Fix root build.gradle - add shadowhook repo
-        run: |
-          echo "=== Adding shadowhook maven repo ==="
-          # Add mavenCentral before jcenter replacement to ensure it's there
-          if ! grep -q "mavenCentral()" build.gradle; then
-            sed -i 's/google()/google()
-        mavenCentral()/g' build.gradle
-          fi
-          echo "✅ Verified mavenCentral() in root build.gradle"
-
-      # ═══════════════════════════════════════════
-      # FIX 5: Create dummy google-services.json
-      # ═══════════════════════════════════════════
       - name: Create dummy google-services.json
         run: |
           echo "=== Creating dummy google-services.json ==="
           mkdir -p app
-          cat > app/google-services.json << 'EOF'
-          {
-            "project_info": {
-              "project_number": "123456789",
-              "project_id": "dummy-project",
-              "storage_bucket": "dummy-project.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:123456789:android:abcdef123456",
-                  "android_client_info": {
-                    "package_name": "ru.edgar.space"
-                  }
-                },
-                "api_key": [{"current_key": "dummy-key"}],
-                "services": {
-                  "appinvite_service": {
-                    "other_platform_oauth_client": []
-                  }
-                }
-              }
-            ]
-          }
-          EOF
-          echo "✅ Created dummy google-services.json"
+          echo '{' > app/google-services.json
+          echo '  "project_info": {' >> app/google-services.json
+          echo '    "project_number": "123456789",' >> app/google-services.json
+          echo '    "project_id": "dummy-project",' >> app/google-services.json
+          echo '    "storage_bucket": "dummy-project.appspot.com"' >> app/google-services.json
+          echo '  },' >> app/google-services.json
+          echo '  "client": [' >> app/google-services.json
+          echo '    {' >> app/google-services.json
+          echo '      "client_info": {' >> app/google-services.json
+          echo '        "mobilesdk_app_id": "1:123456789:android:abcdef123456",' >> app/google-services.json
+          echo '        "android_client_info": {' >> app/google-services.json
+          echo '          "package_name": "ru.edgar.space"' >> app/google-services.json
+          echo '        }' >> app/google-services.json
+          echo '      },' >> app/google-services.json
+          echo '      "api_key": [{"current_key": "dummy-key"}],' >> app/google-services.json
+          echo '      "services": {' >> app/google-services.json
+          echo '        "appinvite_service": {' >> app/google-services.json
+          echo '          "other_platform_oauth_client": []' >> app/google-services.json
+          echo '        }' >> app/google-services.json
+          echo '      }' >> app/google-services.json
+          echo '    }' >> app/google-services.json
+          echo '  ]' >> app/google-services.json
+          echo '}' >> app/google-services.json
+          echo "Done"
 
-      # ═══════════════════════════════════════════
-      # FIX 6: Handle keystore
-      # ═══════════════════════════════════════════
       - name: Setup keystore
         run: |
           echo "=== Setting up keystore ==="
           if [ -f app/edgar.jks ]; then
-            echo "✅ Using existing edgar.jks from repo"
+            echo "Using existing edgar.jks"
           else
             keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Android Debug,O=Android,C=US"
-            echo "✅ Created new keystore"
+            echo "Created new keystore"
           fi
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # ═══════════════════════════════════════════
-      # BUILD: Try to build
-      # ═══════════════════════════════════════════
       - name: Build Debug APK
         run: |
           ./gradlew :app:assembleDebug --stacktrace --info 2>&1 | tee debug-build.log || true
@@ -151,9 +115,6 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease --stacktrace --info 2>&1 | tee release-build.log || true
 
-      # ═══════════════════════════════════════════
-      # UPLOAD artifacts
-      # ═══════════════════════════════════════════
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         if: always()
@@ -190,8 +151,7 @@ jobs:
           if ls app/build/outputs/apk/debug/*.apk 1>/dev/null 2>&1; then
             ls -lh app/build/outputs/apk/debug/*.apk
           else
-            echo "❌ DEBUG APK: NOT BUILT"
-            echo "--- Last 30 lines of debug log ---"
+            echo "DEBUG APK: NOT BUILT"
             tail -30 debug-build.log || true
           fi
           echo ""
@@ -199,8 +159,7 @@ jobs:
           if ls app/build/outputs/apk/release/*.apk 1>/dev/null 2>&1; then
             ls -lh app/build/outputs/apk/release/*.apk
           else
-            echo "❌ RELEASE APK: NOT BUILT"
-            echo "--- Last 30 lines of release log ---"
+            echo "RELEASE APK: NOT BUILT"
             tail -30 release-build.log || true
           fi
           echo ""
