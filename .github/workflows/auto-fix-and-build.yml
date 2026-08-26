@@ -1,0 +1,392 @@
+name: Auto-Fix-Build-SPACE-RP
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: "17"
+  ANDROID_API_LEVEL: "34"
+  NDK_VERSION: "25.2.9519653"
+
+jobs:
+  analyze:
+    name: 1-Analyze
+    runs-on: ubuntu-22.04
+    outputs:
+      has_keystore: ${{ steps.check_keystore.outputs.result }}
+      has_vk_id: ${{ steps.check_vk.outputs.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check exposed keystore
+        id: check_keystore
+        run: |
+          if [ -f "app/edgar.jks" ]; then
+            echo "result=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Found exposed keystore: app/edgar.jks"
+          else
+            echo "result=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check exposed VK ID
+        id: check_vk
+        run: |
+          FILE="app/src/main/java/ru/edgar/launcher/activity/MainActivity.java"
+          if [ -f "$FILE" ]; then
+            if grep -q "51874098" "$FILE"; then
+              echo "result=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "result=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "result=missing" >> "$GITHUB_OUTPUT"
+          fi
+
+  fix:
+    name: 2-Fix-Security
+    needs: analyze
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Delete exposed keystore
+        if: needs.analyze.outputs.has_keystore == 'true'
+        run: rm -f app/edgar.jks
+
+      - name: Backup original build.gradle
+        run: cp app/build.gradle app/build.gradle.bak
+
+      - name: Fix signing configs
+        run: |
+          cat > /tmp/new_signing.txt << 'EOF'
+      signingConfigs {
+          debug {
+              storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")
+              storePassword "android"
+              keyAlias "androiddebugkey"
+              keyPassword "android"
+          }
+          release {
+              def keystoreFile = System.getenv("CI_KEYSTORE_FILE")
+              if (keystoreFile != null) {
+                  storeFile file(keystoreFile)
+                  storePassword System.getenv("CI_KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("CI_KEY_ALIAS")
+                  keyPassword System.getenv("CI_KEY_PASSWORD")
+              } else {
+                  storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")
+                  storePassword "android"
+                  keyAlias "androiddebugkey"
+                  keyPassword "android"
+              }
+          }
+      }
+      EOF
+          
+          # Extract lines before signingConfigs
+          head -n 20 app/build.gradle.bak > /tmp/part1.txt
+          
+          # Extract lines after signingConfigs closing brace
+          tail -n +45 app/build.gradle.bak > /tmp/part2.txt
+          
+          # Combine
+          cat /tmp/part1.txt /tmp/new_signing.txt /tmp/part2.txt > app/build.gradle
+
+      - name: Fix debug build type
+        run: |
+          sed -i 's/debuggable false/debuggable true/g' app/build.gradle
+          sed -i 's/jniDebuggable false/jniDebuggable true/g' app/build.gradle
+
+      - name: Enable minify and shrink
+        run: |
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' app/build.gradle
+          
+          # Add shrinkResources if not present
+          if ! grep -q "shrinkResources" app/build.gradle; then
+            sed -i '/minifyEnabled true/a\            shrinkResources true' app/build.gradle
+          fi
+
+      - name: Fix lint
+        run: |
+          sed -i 's/checkReleaseBuilds false/checkReleaseBuilds true/g' app/build.gradle
+
+      - name: Fix VK App ID
+        if: needs.analyze.outputs.has_vk_id == 'true'
+        run: |
+          FILE="app/src/main/java/ru/edgar/launcher/activity/MainActivity.java"
+          sed -i 's/51874098/BuildConfig.VK_APP_ID/g' "$FILE"
+
+      - name: Fix cleartext traffic
+        run: |
+          MANIFEST="app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/usesCleartextTraffic="true"/usesCleartextTraffic="false"/g' "$MANIFEST"
+          fi
+
+      - name: Create network security config
+        run: |
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/network_security_config.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+EOF
+
+      - name: Add networkSecurityConfig to manifest
+        run: |
+          MANIFEST="app/src/main/AndroidManifest.xml"
+          if ! grep -q "networkSecurityConfig" "$MANIFEST"; then
+            sed -i 's/usesCleartextTraffic="false"/usesCleartextTraffic="false" android:networkSecurityConfig="@xml\/network_security_config"/g' "$MANIFEST"
+          fi
+
+      - name: Upload fixed files
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-files
+          path: |
+            app/build.gradle
+            app/src/main/AndroidManifest.xml
+            app/src/main/res/xml/network_security_config.xml
+            app/src/main/java/ru/edgar/launcher/activity/MainActivity.java
+          retention-days: 1
+
+  build-debug:
+    name: 3-Build-Debug
+    needs: fix
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download fixed files
+        uses: actions/download-artifact@v4
+        with:
+          name: fixed-files
+          path: downloaded
+
+      - name: Apply fixes
+        run: |
+          cp downloaded/app/build.gradle app/build.gradle
+          cp downloaded/app/src/main/AndroidManifest.xml app/src/main/AndroidManifest.xml
+          cp downloaded/app/src/main/java/ru/edgar/launcher/activity/MainActivity.java app/src/main/java/ru/edgar/launcher/activity/MainActivity.java
+          mkdir -p app/src/main/res/xml
+          cp downloaded/app/src/main/res/xml/network_security_config.xml app/src/main/res/xml/
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          sdkmanager "platforms;android-${{ env.ANDROID_API_LEVEL }}"
+          sdkmanager "build-tools;34.0.0"
+          sdkmanager "ndk;${{ env.NDK_VERSION }}"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Cache NDK
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+
+      - name: Create debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          KEYSTORE="$HOME/.android/debug.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            keytool -genkey -v \
+              -keystore "$KEYSTORE" \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -storepass android \
+              -keypass android
+          fi
+
+      - name: Build Debug APK
+        run: |
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      - name: Check APK
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "ERROR: No APK found"
+            exit 1
+          fi
+          ls -lh "$APK"
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  build-release:
+    name: 4-Build-Release
+    needs: fix
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download fixed files
+        uses: actions/download-artifact@v4
+        with:
+          name: fixed-files
+          path: downloaded
+
+      - name: Apply fixes
+        run: |
+          cp downloaded/app/build.gradle app/build.gradle
+          cp downloaded/app/src/main/AndroidManifest.xml app/src/main/AndroidManifest.xml
+          cp downloaded/app/src/main/java/ru/edgar/launcher/activity/MainActivity.java app/src/main/java/ru/edgar/launcher/activity/MainActivity.java
+          mkdir -p app/src/main/res/xml
+          cp downloaded/app/src/main/res/xml/network_security_config.xml app/src/main/res/xml/
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          sdkmanager "platforms;android-${{ env.ANDROID_API_LEVEL }}"
+          sdkmanager "build-tools;34.0.0"
+          sdkmanager "ndk;${{ env.NDK_VERSION }}"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Cache NDK
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+
+      - name: Setup signing
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_FILE }}" ]; then
+            echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > /tmp/release.keystore
+            echo "CI_KEYSTORE_FILE=/tmp/release.keystore" >> "$GITHUB_ENV"
+            echo "CI_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "CI_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> "$GITHUB_ENV"
+            echo "CI_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          else
+            mkdir -p "$HOME/.android"
+            KEYSTORE="$HOME/.android/debug.keystore"
+            if [ ! -f "$KEYSTORE" ]; then
+              keytool -genkey -v \
+                -keystore "$KEYSTORE" \
+                -alias androiddebugkey \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US" \
+                -storepass android \
+                -keypass android
+            fi
+            echo "CI_KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
+            echo "CI_KEYSTORE_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "CI_KEY_ALIAS=androiddebugkey" >> "$GITHUB_ENV"
+            echo "CI_KEY_PASSWORD=android" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Release APK
+        env:
+          CI_KEYSTORE_FILE: ${{ env.CI_KEYSTORE_FILE }}
+          CI_KEYSTORE_PASSWORD: ${{ env.CI_KEYSTORE_PASSWORD }}
+          CI_KEY_ALIAS: ${{ env.CI_KEY_ALIAS }}
+          CI_KEY_PASSWORD: ${{ env.CI_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: Check APK
+        run: |
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "ERROR: No APK found"
+            exit 1
+          fi
+          ls -lh "$APK"
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  release:
+    name: 5-Release
+    needs: [build-debug, build-release]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
