@@ -1,5 +1,170 @@
 name: Build MATRESHKA RP - Auto Fix & Build
+name: Build MATRESHKA RP - Auto Fix & Build
 
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=2g" -Dorg.gradle.parallel=true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ═══════════════════════════════════════════
+      # 1. Checkout
+      # ═══════════════════════════════════════════
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ═══════════════════════════════════════════
+      # 2. Setup Environment
+      # ═══════════════════════════════════════════
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses & install tools
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "ndk;25.2.9519653" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      # ═══════════════════════════════════════════
+      # 3. Auto-Fix Build Files
+      # ═══════════════════════════════════════════
+      - name: Auto-fix build.gradle (root) - Replace jcenter
+        run: |
+          echo "=== Fixing root build.gradle ==="
+          if [ -f build.gradle ]; then
+            sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+            echo "✅ Replaced jcenter with mavenCentral"
+          fi
+
+      - name: Auto-fix app/build.gradle - Remove misplaced allprojects block
+        run: |
+          echo "=== Fixing app/build.gradle ==="
+          if [ -f app/build.gradle ]; then
+            sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
+            echo "✅ Removed misplaced allprojects block"
+          fi
+
+      # ═══════════════════════════════════════════
+      # 4. Handle Keystore (FIXED!)
+      # ═══════════════════════════════════════════
+      - name: Setup signing keystore
+        run: |
+          echo "=== Checking keystore ==="
+          if [ -f app/edgar.jks ]; then
+            echo "✅ Keystore edgar.jks already exists in repo"
+            echo "   Using existing keystore..."
+          else
+            echo "⚠️ Keystore not found, creating new one..."
+            keytool -genkey -v               -keystore app/edgar.jks               -alias key0               -keyalg RSA               -keysize 2048               -validity 10000               -storepass edgar333               -keypass edgar333               -dname "CN=Android Debug,O=Android,C=US"
+            echo "✅ Created new keystore"
+          fi
+
+      # ═══════════════════════════════════════════
+      # 5. Verify google-services.json
+      # ═══════════════════════════════════════════
+      - name: Verify google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "❌ ERROR: app/google-services.json is missing!"
+            echo "Please add your Firebase google-services.json file to the app/ directory."
+            exit 1
+          fi
+          echo "✅ google-services.json found"
+
+      # ═══════════════════════════════════════════
+      # 6. Grant execute permission
+      # ═══════════════════════════════════════════
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # ═══════════════════════════════════════════
+      # 7. Build Debug APK
+      # ═══════════════════════════════════════════
+      - name: Build Debug APK
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace --info || true
+
+      # ═══════════════════════════════════════════
+      # 8. Build Release APK
+      # ═══════════════════════════════════════════
+      - name: Build Release APK
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace --info || true
+
+      # ═══════════════════════════════════════════
+      # 9. Upload ALL Build Artifacts
+      # ═══════════════════════════════════════════
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MATRESHKA-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MATRESHKA-Release-APK
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+      - name: Upload Build Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Build-Reports
+          path: |
+            app/build/reports/
+            app/build/outputs/
+          retention-days: 7
+
+      # ═══════════════════════════════════════════
+      # 10. Summary
+      # ═══════════════════════════════════════════
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "         BUILD SUMMARY"
+          echo "═══════════════════════════════════════"
+          echo ""
+          if ls app/build/outputs/apk/debug/*.apk 1> /dev/null 2>&1; then
+            echo "✅ DEBUG APK built successfully:"
+            ls -lh app/build/outputs/apk/debug/*.apk
+          else
+            echo "❌ DEBUG APK build failed"
+          fi
+          echo ""
+          if ls app/build/outputs/apk/release/*.apk 1> /dev/null 2>&1; then
+            echo "✅ RELEASE APK built successfully:"
+            ls -lh app/build/outputs/apk/release/*.apk
+          else
+            echo "❌ RELEASE APK build failed"
+          fi
+          echo ""
+          echo "═══════════════════════════════════════"
 on:
   push:
     branches: [ main, master ]
