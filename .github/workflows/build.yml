@@ -1,0 +1,69 @@
+name: Build Matreshka RP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34"
+          sdkmanager "build-tools;34.0.0"
+          sdkmanager "ndk;25.2.9519653"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Fix files for CI
+        run: |
+          rm -f local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> local.properties
+          sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+          sed -i "/allprojects.*maven.aliyun/d" app/build.gradle
+          sed -i "s/shadowhook:1.0.9/shadowhook:2.0.1/g" app/build.gradle
+          if ! grep -q "android.prefabVersion" gradle.properties; then
+            echo "android.prefabVersion=2.0.0" >> gradle.properties
+          fi
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build Debug
+        run: ./gradlew assembleDebug --stacktrace 2>&1 | tee build_log.txt
+        continue-on-error: true
+
+      - name: Show last errors
+        if: always()
+        run: |
+          grep -n "error:" build_log.txt | head -10 || true
+          tail -50 build_log.txt
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_log.txt
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrp-apk
+          path: app/build/outputs/apk/debug/*.apk
