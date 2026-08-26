@@ -51,44 +51,35 @@ jobs:
         run: |
           echo "=== Fixing root build.gradle ==="
           if [ -f build.gradle ]; then
-            # Replace jcenter() with mavenCentral()
             sed -i 's/jcenter()/mavenCentral()/g' build.gradle
-            echo "✅ Replaced jcenter with mavenCentral in root build.gradle"
+            echo "✅ Replaced jcenter with mavenCentral"
           fi
-          cat build.gradle
 
       - name: Auto-fix app/build.gradle - Remove misplaced allprojects block
         run: |
           echo "=== Fixing app/build.gradle ==="
           if [ -f app/build.gradle ]; then
-            # Remove the misplaced allprojects block inside android {}
             sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
-            echo "✅ Removed misplaced allprojects block from app/build.gradle"
+            echo "✅ Removed misplaced allprojects block"
           fi
-          cat app/build.gradle
 
-      - name: Auto-fix gradle.properties - Add required properties
+      # ═══════════════════════════════════════════
+      # 4. Handle Keystore (FIXED!)
+      # ═══════════════════════════════════════════
+      - name: Setup signing keystore
         run: |
-          echo "=== Fixing gradle.properties ==="
-          if [ -f gradle.properties ]; then
-            # Ensure nonTransitiveRClass is set
-            if ! grep -q "android.nonTransitiveRClass" gradle.properties; then
-              echo "android.nonTransitiveRClass=true" >> gradle.properties
-            fi
-            echo "✅ Verified gradle.properties"
+          echo "=== Checking keystore ==="
+          if [ -f app/edgar.jks ]; then
+            echo "✅ Keystore edgar.jks already exists in repo"
+            echo "   Using existing keystore..."
+          else
+            echo "⚠️ Keystore not found, creating new one..."
+            keytool -genkey -v               -keystore app/edgar.jks               -alias key0               -keyalg RSA               -keysize 2048               -validity 10000               -storepass edgar333               -keypass edgar333               -dname "CN=Android Debug,O=Android,C=US"
+            echo "✅ Created new keystore"
           fi
-          cat gradle.properties
 
       # ═══════════════════════════════════════════
-      # 4. Create Dummy Keystore (for signing)
-      # ═══════════════════════════════════════════
-      - name: Create signing keystore
-        run: |
-          keytool -genkey -v             -keystore app/edgar.jks             -alias key0             -keyalg RSA             -keysize 2048             -validity 10000             -storepass edgar333             -keypass edgar333             -dname "CN=Android Debug,O=Android,C=US"
-          echo "✅ Created signing keystore"
-
-      # ═══════════════════════════════════════════
-      # 5. Verify google-services.json exists
+      # 5. Verify google-services.json
       # ═══════════════════════════════════════════
       - name: Verify google-services.json
         run: |
@@ -173,4 +164,3 @@ jobs:
           fi
           echo ""
           echo "═══════════════════════════════════════"
- 
