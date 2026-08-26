@@ -41,8 +41,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Fix root build.gradle
-        run: sed -i "s/jcenter()/mavenCentral()/g" build.gradle
+      - name: Fix root build.gradle - replace jcenter
+        run: |
+          sed -i 's/jcenter()/mavenCentral()/g' build.gradle
 
       - name: Fix app build.gradle - remove allprojects block
         run: |
@@ -54,20 +55,14 @@ jobs:
           grep -v "com.joom.paranoid:paranoid-gradle-plugin" app/build.gradle > app/build.gradle.tmp
           mv app/build.gradle.tmp app/build.gradle
 
-      - name: Add shadowhook maven repo
+      - name: Add shadowhook maven repo to root build.gradle
         run: |
-          python3 -c "
-          import sys
-          with open('build.gradle', 'r') as f:
-              content = f.read()
-          if 'artifact.bytedance.com' not in content:
-              content = content.replace("maven { url 'https://artifacts.applovin.com/android' }", "maven { url 'https://artifacts.applovin.com/android' }\n        maven { url 'https://artifact.bytedance.com/repository/Volcengine/' }")
-              with open('build.gradle', 'w') as f:
-                  f.write(content)
-              print('Added shadowhook repo')
-          else:
-              print('Shadowhook repo already exists')
-          "
+          if ! grep -q "artifact.bytedance.com" build.gradle; then
+            sed -i "/maven { url 'https:\/\/artifacts.applovin.com\/android' }/a\\        maven { url 'https:\/\/artifact.bytedance.com\/repository\/Volcengine\/' }" build.gradle
+            echo "Added shadowhook repo"
+          else
+            echo "Shadowhook repo already exists"
+          fi
 
       - name: Verify google-services.json
         run: |
