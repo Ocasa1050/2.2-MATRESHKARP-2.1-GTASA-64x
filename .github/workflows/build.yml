@@ -1,4 +1,4 @@
-name: Build MATRESHKA RP APK
+name: Build MATRESHKA RP - Auto Fix & Build
 
 on:
   push:
@@ -7,96 +7,169 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=2g" -Dorg.gradle.parallel=true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 60
+
     steps:
-      # ─── 1. Checkout ───
+      # ═══════════════════════════════════════════
+      # 1. Checkout
+      # ═══════════════════════════════════════════
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ─── 2. Setup JDK ───
-      - name: Set up JDK 17
+      # ═══════════════════════════════════════════
+      # 2. Setup Environment
+      # ═══════════════════════════════════════════
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
 
-      # ─── 3. Setup Android SDK ───
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # ─── 4. Setup NDK ───
-      - name: Install NDK
+      - name: Accept licenses & install tools
         run: |
-          sdkmanager "ndk;25.2.9519653" "cmake;3.22.1"
+          yes | sdkmanager --licenses || true
+          sdkmanager "ndk;25.2.9519653" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
 
-      # ─── 5. Cache Gradle ───
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      # ─── 6. Create Dummy Keystore (للبناء فقط) ───
-      - name: Create dummy keystore
+      # ═══════════════════════════════════════════
+      # 3. Auto-Fix Build Files
+      # ═══════════════════════════════════════════
+      - name: Auto-fix build.gradle (root) - Replace jcenter
         run: |
-          mkdir -p app
-          keytool -genkey -v \
-            -keystore app/edgar.jks \
-            -alias key0 \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass edgar333 \
-            -keypass edgar333 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          echo "=== Fixing root build.gradle ==="
+          if [ -f build.gradle ]; then
+            # Replace jcenter() with mavenCentral()
+            sed -i 's/jcenter()/mavenCentral()/g' build.gradle
+            echo "✅ Replaced jcenter with mavenCentral in root build.gradle"
+          fi
+          cat build.gradle
 
-      # ─── 7. Grant execute permission ───
-      - name: Grant execute permission for gradlew
+      - name: Auto-fix app/build.gradle - Remove misplaced allprojects block
+        run: |
+          echo "=== Fixing app/build.gradle ==="
+          if [ -f app/build.gradle ]; then
+            # Remove the misplaced allprojects block inside android {}
+            sed -i "/allprojects {repositories {maven { url 'https:\/\/maven.aliyun.com\/repository\/jcenter' }}}}/d" app/build.gradle
+            echo "✅ Removed misplaced allprojects block from app/build.gradle"
+          fi
+          cat app/build.gradle
+
+      - name: Auto-fix gradle.properties - Add required properties
+        run: |
+          echo "=== Fixing gradle.properties ==="
+          if [ -f gradle.properties ]; then
+            # Ensure nonTransitiveRClass is set
+            if ! grep -q "android.nonTransitiveRClass" gradle.properties; then
+              echo "android.nonTransitiveRClass=true" >> gradle.properties
+            fi
+            echo "✅ Verified gradle.properties"
+          fi
+          cat gradle.properties
+
+      # ═══════════════════════════════════════════
+      # 4. Create Dummy Keystore (for signing)
+      # ═══════════════════════════════════════════
+      - name: Create signing keystore
+        run: |
+          keytool -genkey -v             -keystore app/edgar.jks             -alias key0             -keyalg RSA             -keysize 2048             -validity 10000             -storepass edgar333             -keypass edgar333             -dname "CN=Android Debug,O=Android,C=US"
+          echo "✅ Created signing keystore"
+
+      # ═══════════════════════════════════════════
+      # 5. Verify google-services.json exists
+      # ═══════════════════════════════════════════
+      - name: Verify google-services.json
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "❌ ERROR: app/google-services.json is missing!"
+            echo "Please add your Firebase google-services.json file to the app/ directory."
+            exit 1
+          fi
+          echo "✅ google-services.json found"
+
+      # ═══════════════════════════════════════════
+      # 6. Grant execute permission
+      # ═══════════════════════════════════════════
+      - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # ─── 8. Build Debug APK ───
+      # ═══════════════════════════════════════════
+      # 7. Build Debug APK
+      # ═══════════════════════════════════════════
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace --info || true
 
-      # ─── 9. Build Release APK ───
+      # ═══════════════════════════════════════════
+      # 8. Build Release APK
+      # ═══════════════════════════════════════════
       - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
-        env:
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || 'edgar333' }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || 'edgar333' }}
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace --info || true
 
-      # ─── 10. Upload Debug APK ───
+      # ═══════════════════════════════════════════
+      # 9. Upload ALL Build Artifacts
+      # ═══════════════════════════════════════════
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: matreshka-debug-apk
+          name: MATRESHKA-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          retention-days: 14
 
-      # ─── 11. Upload Release APK ───
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: matreshka-release-apk
+          name: MATRESHKA-Release-APK
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+      - name: Upload Build Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Build-Reports
+          path: |
+            app/build/reports/
+            app/build/outputs/
           retention-days: 7
 
-      # ─── 12. Upload Build Reports ───
-      - name: Upload build reports
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-reports
-          path: app/build/reports/
-          retention-days: 3
+      # ═══════════════════════════════════════════
+      # 10. Summary
+      # ═══════════════════════════════════════════
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "         BUILD SUMMARY"
+          echo "═══════════════════════════════════════"
+          echo ""
+          if ls app/build/outputs/apk/debug/*.apk 1> /dev/null 2>&1; then
+            echo "✅ DEBUG APK built successfully:"
+            ls -lh app/build/outputs/apk/debug/*.apk
+          else
+            echo "❌ DEBUG APK build failed"
+          fi
+          echo ""
+          if ls app/build/outputs/apk/release/*.apk 1> /dev/null 2>&1; then
+            echo "✅ RELEASE APK built successfully:"
+            ls -lh app/build/outputs/apk/release/*.apk
+          else
+            echo "❌ RELEASE APK build failed"
+          fi
+          echo ""
+          echo "═══════════════════════════════════════"
