@@ -29,26 +29,15 @@ jobs:
 
       - name: Fix build.gradle with sed
         run: |
-          # Backup
           cp app/build.gradle app/build.gradle.bak
-          
-          # Fix 1: Remove allprojects from android block
           sed -i '/allprojects\s*{[^}]*}/d' app/build.gradle || true
-          
-          # Fix 2: Replace signing configs
           sed -i "s|storeFile file('edgar.jks')|storeFile file(System.getProperty(\"user.home\") + \"/.android/debug.keystore\")|g" app/build.gradle
           sed -i "s|storePassword 'edgar333'|storePassword \"android\"|g" app/build.gradle
           sed -i "s|keyAlias 'key0'|keyAlias \"androiddebugkey\"|g" app/build.gradle
           sed -i "s|keyPassword 'edgar333'|keyPassword \"android\"|g" app/build.gradle
-          
-          # Fix 3: Fix debug build type
           sed -i 's/debuggable false/debuggable true/g' app/build.gradle
           sed -i 's/jniDebuggable false/jniDebuggable true/g' app/build.gradle
-          
-          # Fix 4: Fix release build type
           sed -i 's/minifyEnabled false/minifyEnabled true/g' app/build.gradle
-          
-          # Fix 5: Fix lint
           sed -i 's/checkReleaseBuilds false/checkReleaseBuilds true/g' app/build.gradle
 
       - name: Fix VK App ID
@@ -113,6 +102,9 @@ jobs:
           if [ ! -f "$HOME/.android/debug.keystore" ]; then
             keytool -genkey -v -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -storepass android -keypass android
           fi
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
