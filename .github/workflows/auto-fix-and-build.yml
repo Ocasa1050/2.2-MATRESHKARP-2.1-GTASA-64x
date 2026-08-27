@@ -24,45 +24,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Remove exposed keystore
-        run: rm -f app/edgar.jks
+      - name: Run auto-fix script
+        run: python3 .github/scripts/fix_all.py
 
-      - name: Fix build.gradle with sed
-        run: |
-          cp app/build.gradle app/build.gradle.bak
-          sed -i '/allprojects\s*{[^}]*}/d' app/build.gradle || true
-          sed -i "s|storeFile file('edgar.jks')|storeFile file(System.getProperty(\"user.home\") + \"/.android/debug.keystore\")|g" app/build.gradle
-          sed -i "s|storePassword 'edgar333'|storePassword \"android\"|g" app/build.gradle
-          sed -i "s|keyAlias 'key0'|keyAlias \"androiddebugkey\"|g" app/build.gradle
-          sed -i "s|keyPassword 'edgar333'|keyPassword \"android\"|g" app/build.gradle
-          sed -i 's/debuggable false/debuggable true/g' app/build.gradle
-          sed -i 's/jniDebuggable false/jniDebuggable true/g' app/build.gradle
-          sed -i 's/minifyEnabled false/minifyEnabled true/g' app/build.gradle
-          sed -i 's/checkReleaseBuilds false/checkReleaseBuilds true/g' app/build.gradle
-
-      - name: Fix VK App ID
-        run: sed -i 's/51874098/BuildConfig.VK_APP_ID/g' app/src/main/java/ru/edgar/launcher/activity/MainActivity.java || true
-
-      - name: Fix AndroidManifest.xml
-        run: sed -i 's/usesCleartextTraffic="true"/usesCleartextTraffic="false"/g' app/src/main/AndroidManifest.xml || true
-
-      - name: Create network security config
-        run: |
-          mkdir -p app/src/main/res/xml
-          echo '<?xml version="1.0" encoding="utf-8"?>' > app/src/main/res/xml/network_security_config.xml
-          echo '<network-security-config>' >> app/src/main/res/xml/network_security_config.xml
-          echo '    <base-config cleartextTrafficPermitted="false">' >> app/src/main/res/xml/network_security_config.xml
-          echo '        <trust-anchors>' >> app/src/main/res/xml/network_security_config.xml
-          echo '            <certificates src="system" />' >> app/src/main/res/xml/network_security_config.xml
-          echo '        </trust-anchors>' >> app/src/main/res/xml/network_security_config.xml
-          echo '    </base-config>' >> app/src/main/res/xml/network_security_config.xml
-          echo '</network-security-config>' >> app/src/main/res/xml/network_security_config.xml
-
-      - name: Add networkSecurityConfig to manifest
-        run: |
-          if ! grep -q "networkSecurityConfig" app/src/main/AndroidManifest.xml; then
-            sed -i 's/usesCleartextTraffic="false"/usesCleartextTraffic="false" android:networkSecurityConfig="@xml\/network_security_config"/g' app/src/main/AndroidManifest.xml
-          fi
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Setup JDK
         uses: actions/setup-java@v4
@@ -102,9 +68,6 @@ jobs:
           if [ ! -f "$HOME/.android/debug.keystore" ]; then
             keytool -genkey -v -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -storepass android -keypass android
           fi
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
