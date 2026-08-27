@@ -5,7 +5,7 @@
     Do not delete this comment block. Respect others' work!
 */
 
-#include "RGBA.h"
+#include "rgba.h"
 #include "common.h"
 
 CRGBA::CRGBA(RwRGBAReal rgba) :
@@ -21,15 +21,15 @@ CRGBA::CRGBA(RwRGBAReal rgba) :
 void CRGBA::RainbowCycle(uint32 t) {
     const uint32_t period = 4000;
 
-    // ��������� ��������� ����� � ������ �������
+    // вычисляем прошедшее время в текущем периоде
     uint32_t timeElapsed = t % period;
 
-    // ��������� �������� � ������� �� 0 �� 1
+    // вычисляем прогресс в диапазоне от 0 до 1
     double progress = static_cast<double>(timeElapsed) / static_cast<double>(period);
 
-    // ���������� sin ��� �������� �������� ����� �������
-    double angle = progress * 2 * M_PI; // ����������� �������� � ���� (0 - 2?)
-    r = sin(angle + 0) * 127 + 128; // ���������� ���������� �����
+    // используем sin для плавного цикла через цветовой спектр
+    double angle = progress * 2 * M_PI; // преобразуем прогресс в угол (0 - 2π)
+    r = sin(angle + 0) * 127 + 128; // используем смещенные углы
     g = sin(angle + 2 * M_PI / 3) * 127 + 128;
     b = sin(angle + 4 * M_PI / 3) * 127 + 128;
 
