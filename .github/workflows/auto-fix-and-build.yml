@@ -1,86 +1,52 @@
-name: Auto-Fix-Build-SPACE-RP
+name: Diagnose-Build
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
-env:
-  JAVA_VERSION: "17"
-  ANDROID_API_LEVEL: "34"
-  NDK_VERSION: "25.2.9519653"
-
 jobs:
-  build:
-    name: Build-APK
+  diagnose:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Run auto-fix script
-        run: python3 .github/scripts/fix_all.py
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
-      - name: Setup JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
-          cache: gradle
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK components
+      - uses: actions/checkout@v4
+      
+      - name: Print EVERYTHING
         run: |
-          sdkmanager "platforms;android-${{ env.ANDROID_API_LEVEL }}"
-          sdkmanager "build-tools;34.0.0"
-          sdkmanager "ndk;${{ env.NDK_VERSION }}"
-          sdkmanager "cmake;3.22.1"
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-${{ runner.os }}-
-
-      - name: Cache NDK
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
-          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
-
-      - name: Create debug keystore
+          echo "=== FILES ==="
+          find . -maxdepth 2 -type f | sort
+          
+          echo "=== build.gradle (project) ==="
+          cat build.gradle 2>/dev/null || echo "MISSING"
+          
+          echo "=== app/build.gradle ==="
+          cat app/build.gradle 2>/dev/null || echo "MISSING"
+          
+          echo "=== settings.gradle ==="
+          cat settings.gradle 2>/dev/null || echo "MISSING"
+          
+          echo "=== gradle.properties ==="
+          cat gradle.properties 2>/dev/null || echo "MISSING"
+          
+          echo "=== gradlew ==="
+          ls -la gradlew 2>/dev/null || echo "MISSING"
+          
+          echo "=== gradle/wrapper ==="
+          ls -la gradle/wrapper/ 2>/dev/null || echo "MISSING"
+          
+          echo "=== google-services.json ==="
+          ls -la app/google-services.json 2>/dev/null || echo "MISSING"
+          
+          echo "=== CMakeLists.txt ==="
+          find . -name "CMakeLists.txt" 2>/dev/null || echo "MISSING"
+      
+      - name: Try build and capture FULL error
         run: |
-          mkdir -p "$HOME/.android"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkey -v -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -storepass android -keypass android
-          fi
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: Check Debug APK
-        run: |
-          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
-          if [ -z "$APK" ]; then echo "ERROR: No APK"; exit 1; fi
-          ls -lh "$APK"
-
-      - name: Upload Debug APK
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug --stacktrace --info 2>&1 | tee build.log || true
+          echo "=== LAST 100 LINES ==="
+          tail -100 build.log 2>/dev/null || echo "NO LOG"
+      
+      - name: Upload diagnosis
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          name: diagnosis
+          path: build.log
