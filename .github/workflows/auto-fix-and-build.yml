@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    
     steps:
       - uses: actions/checkout@v4
 
@@ -15,11 +16,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK & CMake
+        run: |
+          sdkmanager "ndk;25.2.9519653"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Verify file names (Case Check)
+        run: |
+          # التحقق من وجود الملفات بالأسماء الصحيحة
+          test -f gradlew || (echo "gradlew not found!" && exit 1)
+          test -f app/src/main/cpp/CMakeLists.txt || (echo "CMakeLists.txt not found!" && exit 1)
+          test -d app/src/main/cpp/opus || (echo "opus directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp || (echo "samp directory not found!" && exit 1)
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
