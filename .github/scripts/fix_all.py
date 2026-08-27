@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 import os
-import shutil
 
 print("=" * 60)
 print("SPACE RP - Auto Fix Script")
 print("=" * 60)
 
-# ─── 1. Remove exposed keystore ─────────────────────
+# 1. Remove exposed keystore
 if os.path.exists("app/edgar.jks"):
     os.remove("app/edgar.jks")
-    print("✅ Removed exposed keystore: app/edgar.jks")
+    print("✅ Removed exposed keystore")
 
-# ─── 2. Create new build.gradle (Project level) ─────
-build_gradle_project = """buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.0'
-        classpath 'com.google.gms:google-services:4.4.0'
-        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.9'
-    }
+# 2. Create CORRECT build.gradle (Project level)
+build_gradle_project = """plugins {
+    id 'com.android.application' version '8.2.0' apply false
+    id 'com.google.gms.google-services' version '4.4.0' apply false
+    id 'com.google.firebase.crashlytics' version '2.9.9' apply false
 }
 
 allprojects {
@@ -37,7 +30,7 @@ with open("build.gradle", "w") as f:
     f.write(build_gradle_project)
 print("✅ Created build.gradle (Project level)")
 
-# ─── 3. Create new settings.gradle ──────────────────
+# 3. Create settings.gradle
 settings_gradle = """pluginManagement {
     repositories {
         google()
@@ -63,7 +56,7 @@ with open("settings.gradle", "w") as f:
     f.write(settings_gradle)
 print("✅ Created settings.gradle")
 
-# ─── 4. Create new gradle.properties ────────────────
+# 4. Create gradle.properties
 gradle_props = """org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
 org.gradle.parallel=true
 org.gradle.caching=true
@@ -78,14 +71,8 @@ with open("gradle.properties", "w") as f:
     f.write(gradle_props)
 print("✅ Created gradle.properties")
 
-# ─── 5. Create new app/build.gradle ─────────────────
-app_build_gradle = """plugins {
-    id 'com.android.application'
-    id 'com.google.gms.google-services'
-    id 'com.google.firebase.crashlytics'
-}
-
-android {
+# 5. Create app/build.gradle (Module level - NO plugins block)
+app_build_gradle = """android {
     compileSdk 34
     namespace 'ru.edgar.space'
 
@@ -221,7 +208,7 @@ with open("app/build.gradle", "w") as f:
     f.write(app_build_gradle)
 print("✅ Created app/build.gradle")
 
-# ─── 6. Fix MainActivity.java ───────────────────────
+# 6. Fix MainActivity.java
 main_activity_path = "app/src/main/java/ru/edgar/launcher/activity/MainActivity.java"
 if os.path.exists(main_activity_path):
     with open(main_activity_path, "r") as f:
@@ -231,7 +218,7 @@ if os.path.exists(main_activity_path):
         f.write(content)
     print("✅ Fixed MainActivity.java")
 
-# ─── 7. Fix AndroidManifest.xml ─────────────────────
+# 7. Fix AndroidManifest.xml
 manifest_path = "app/src/main/AndroidManifest.xml"
 if os.path.exists(manifest_path):
     with open(manifest_path, "r") as f:
@@ -241,7 +228,7 @@ if os.path.exists(manifest_path):
         f.write(content)
     print("✅ Fixed AndroidManifest.xml")
 
-# ─── 8. Create network_security_config.xml ──────────
+# 8. Create network_security_config.xml
 os.makedirs("app/src/main/res/xml", exist_ok=True)
 network_config = """<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
@@ -256,7 +243,7 @@ with open("app/src/main/res/xml/network_security_config.xml", "w") as f:
     f.write(network_config)
 print("✅ Created network_security_config.xml")
 
-# ─── 9. Add networkSecurityConfig to manifest ───────
+# 9. Add networkSecurityConfig to manifest
 if os.path.exists(manifest_path):
     with open(manifest_path, "r") as f:
         content = f.read()
@@ -270,5 +257,5 @@ if os.path.exists(manifest_path):
         print("✅ Added networkSecurityConfig to manifest")
 
 print("=" * 60)
-print("All fixes applied successfully!")
+print("All fixes applied!")
 print("=" * 60)
