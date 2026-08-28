@@ -8,8 +8,34 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
+      - name: Set UTF-8 Locale
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y locales
+          sudo locale-gen en_US.UTF-8
+          sudo update-locale LANG=en_US.UTF-8
+          export LANG=en_US.UTF-8
+          export LC_ALL=en_US.UTF-8
+
       - uses: actions/checkout@v4
 
+      # ========== إصلاح أسماء الملفات ==========
+      - name: Fix Cyrillic project name
+        run: |
+          sed -i 's/rootProject.name = "УВПФК"/rootProject.name = "MatreshkaRP"/' settings.gradle
+
+      - name: Fix social club folder (space in name)
+        run: |
+          # نقل الملف من المجلد فيه مسافة إلى المجلد الصحيح
+          if [ -d "app/src/main/assets/social club" ]; then
+            mv "app/src/main/assets/social club/socialClubAssets.json" "app/src/main/assets/socialclub/" 2>/dev/null || true
+            rm -rf "app/src/main/assets/social club"
+          fi
+
+      - name: Fix gradlew line endings
+        run: sed -i 's/\r$//' gradlew
+
+      # ========== تثبيت البيئة ==========
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -19,18 +45,30 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
       - name: Install NDK & CMake
         run: |
           sdkmanager "ndk;25.2.9519653"
           sdkmanager "cmake;3.22.1"
+          sdkmanager "build-tools;34.0.0"
+          sdkmanager "platforms;android-34"
 
       - name: Verify file names (Case Check)
         run: |
-          # التحقق من وجود الملفات بالأسماء الصحيحة
+          echo "Checking case-sensitive paths..."
           test -f gradlew || (echo "gradlew not found!" && exit 1)
           test -f app/src/main/cpp/CMakeLists.txt || (echo "CMakeLists.txt not found!" && exit 1)
           test -d app/src/main/cpp/opus || (echo "opus directory not found!" && exit 1)
           test -d app/src/main/cpp/samp || (echo "samp directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/imgui || (echo "imgui directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/bass || (echo "bass directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/armhook || (echo "armhook directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/game/RW || (echo "RW directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/game/Core || (echo "Core directory not found!" && exit 1)
+          test -d app/src/main/cpp/samp/util || (echo "util directory not found!" && exit 1)
+          echo "All paths OK!"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -39,6 +77,7 @@ jobs:
         run: ./gradlew assembleDebug --stacktrace
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
