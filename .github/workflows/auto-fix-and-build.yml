@@ -20,13 +20,8 @@ jobs:
       - uses: actions/checkout@v4
 
       # ========== إصلاح أسماء الملفات ==========
-      - name: Fix Cyrillic project name
-        run: |
-          sed -i 's/rootProject.name = "УВПФК"/rootProject.name = "MatreshkaRP"/' settings.gradle
-
       - name: Fix social club folder (space in name)
         run: |
-          # نقل الملف من المجلد فيه مسافة إلى المجلد الصحيح
           if [ -d "app/src/main/assets/social club" ]; then
             mv "app/src/main/assets/social club/socialClubAssets.json" "app/src/main/assets/socialclub/" 2>/dev/null || true
             rm -rf "app/src/main/assets/social club"
@@ -34,6 +29,41 @@ jobs:
 
       - name: Fix gradlew line endings
         run: sed -i 's/\r$//' gradlew
+
+      # ========== إصلاح allprojects داخل android block ==========
+      - name: Fix allprojects inside android block
+        run: |
+          sed -i '/allprojects {repositories {maven { url .https:\/\/maven.aliyun.com\/repository\/jcenter. }}}}/d' app/build.gradle
+
+      # ========== إنشاء ملفات مفقودة ==========
+      - name: Generate debug keystore
+        run: |
+          keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Debug"
+
+      - name: Create dummy google-services.json
+        run: |
+          echo '{
+            "project_info": {
+              "project_number": "123456789",
+              "project_id": "dummy-project",
+              "storage_bucket": "dummy-project.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789:android:abcdef",
+                  "android_client_info": {
+                    "package_name": "ru.edgar.space"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "dummy-api-key"
+                  }
+                ]
+              }
+            ]
+          }' > app/google-services.json
 
       # ========== تثبيت البيئة ==========
       - name: Setup Java 17
@@ -48,7 +78,7 @@ jobs:
       - name: Accept Android licenses
         run: yes | sdkmanager --licenses || true
 
-      - name: Install NDK & CMake
+      - name: Install NDK & CMake & Build Tools
         run: |
           sdkmanager "ndk;25.2.9519653"
           sdkmanager "cmake;3.22.1"
