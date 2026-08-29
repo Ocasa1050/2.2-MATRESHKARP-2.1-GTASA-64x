@@ -30,40 +30,39 @@ jobs:
       - name: Fix gradlew line endings
         run: sed -i 's/\r$//' gradlew
 
-      # ========== إصلاح allprojects داخل android block ==========
+      # ========== إصلاحات Gradle داخل الـ Workflow فقط ==========
       - name: Fix allprojects inside android block
         run: |
+          # حذف allprojects من داخل android {} — خطأ Gradle صياغي
           sed -i '/allprojects {repositories {maven { url .https:\/\/maven.aliyun.com\/repository\/jcenter. }}}}/d' app/build.gradle
 
-      # ========== إنشاء ملفات مفقودة ==========
-      - name: Generate debug keystore
+      - name: Fix paranoid plugin in dependencies
         run: |
-          keytool -genkey -v -keystore app/edgar.jks -alias key0 -keyalg RSA -keysize 2048 -validity 10000 -storepass edgar333 -keypass edgar333 -dname "CN=Debug"
+          # حذف paranoid-gradle-plugin من dependencies (هو plugin وليس dependency)
+          sed -i '/implementation "com.joom.paranoid:paranoid-gradle-plugin:0.3.14"/d' app/build.gradle
 
-      - name: Create dummy google-services.json
+      - name: Fix Crashlytics native symbols for debug
         run: |
-          echo '{
-            "project_info": {
-              "project_number": "123456789",
-              "project_id": "dummy-project",
-              "storage_bucket": "dummy-project.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:123456789:android:abcdef",
-                  "android_client_info": {
-                    "package_name": "ru.edgar.space"
-                  }
-                },
-                "api_key": [
-                  {
-                    "current_key": "dummy-api-key"
-                  }
-                ]
-              }
-            ]
-          }' > app/google-services.json
+          # تعطيل رفع رموز native في debug لتجنب الأخطاء
+          sed -i 's/nativeSymbolUploadEnabled true/nativeSymbolUploadEnabled false/' app/build.gradle
+
+      # ========== التحقق من الملفات الحساسة ==========
+      - name: Verify critical files exist
+        run: |
+          echo "=== Checking critical files ==="
+          test -f app/google-services.json && echo "✓ google-services.json" || (echo "✗ google-services.json missing!" && exit 1)
+          test -f app/edgar.jks && echo "✓ edgar.jks" || (echo "✗ edgar.jks missing!" && exit 1)
+          test -f gradlew && echo "✓ gradlew" || (echo "✗ gradlew missing!" && exit 1)
+          test -f app/src/main/cpp/CMakeLists.txt && echo "✓ CMakeLists.txt" || (echo "✗ CMakeLists.txt missing!" && exit 1)
+          test -d app/src/main/cpp/opus && echo "✓ opus/" || (echo "✗ opus/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp && echo "✓ samp/" || (echo "✗ samp/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/imgui && echo "✓ imgui/" || (echo "✗ imgui/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/bass && echo "✓ bass/" || (echo "✗ bass/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/vendor/armhook && echo "✓ armhook/" || (echo "✗ armhook/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/game/RW && echo "✓ RW/" || (echo "✗ RW/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/game/Core && echo "✓ Core/" || (echo "✗ Core/ missing!" && exit 1)
+          test -d app/src/main/cpp/samp/util && echo "✓ util/" || (echo "✗ util/ missing!" && exit 1)
+          echo "=== All checks passed ==="
 
       # ========== تثبيت البيئة ==========
       - name: Setup Java 17
@@ -85,29 +84,16 @@ jobs:
           sdkmanager "build-tools;34.0.0"
           sdkmanager "platforms;android-34"
 
-      - name: Verify file names (Case Check)
-        run: |
-          echo "Checking case-sensitive paths..."
-          test -f gradlew || (echo "gradlew not found!" && exit 1)
-          test -f app/src/main/cpp/CMakeLists.txt || (echo "CMakeLists.txt not found!" && exit 1)
-          test -d app/src/main/cpp/opus || (echo "opus directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp || (echo "samp directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/vendor/imgui || (echo "imgui directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/vendor/bass || (echo "bass directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/vendor/armhook || (echo "armhook directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/game/RW || (echo "RW directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/game/Core || (echo "Core directory not found!" && exit 1)
-          test -d app/src/main/cpp/samp/util || (echo "util directory not found!" && exit 1)
-          echo "All paths OK!"
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # ========== البناء ==========
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/25.2.9519653
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
