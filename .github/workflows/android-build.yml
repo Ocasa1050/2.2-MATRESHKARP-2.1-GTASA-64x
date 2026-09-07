@@ -78,6 +78,7 @@ jobs:
 
       - name: Build release APK
         run: |
+          set -o pipefail
           chmod +x ./gradlew
           ./gradlew clean assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
         env:
