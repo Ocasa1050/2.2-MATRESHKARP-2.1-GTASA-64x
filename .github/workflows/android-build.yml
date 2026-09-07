@@ -55,6 +55,12 @@ jobs:
                     "package_name": "ru.edgar.space"
                   }
                 },
+                "oauth_client": [
+                  {
+                    "client_id": "1234567890-fakewebclient.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
                 "api_key": [
                   {
                     "current_key": "fake-api-key"
