@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<defaultsMap>
+    <entry>
+        <key>api1Link</key>
+        <value>https://raw.githubusercontent.com/edgardevwork/space-json-php/main/api/api1.php</value>
+    </entry>
+</defaultsMap>

@@ -36,6 +36,7 @@ import ru.edgar.launcher.model.Servers;
 import ru.edgar.launcher.model.edgar;
 import ru.edgar.launcher.other.Interface;
 import ru.edgar.launcher.other.Lists;
+import ru.edgar.space.BuildConfig;
 import ru.edgar.space.R;
 
 public class SplashFragment extends MainActivity{
@@ -47,6 +48,18 @@ public class SplashFragment extends MainActivity{
     String apiLink;
 
     private FirebaseRemoteConfig mFirebaseRemoteConfig;
+    private static final String DEFAULT_API_LINK = "https://raw.githubusercontent.com/edgardevwork/space-json-php/main/api/api1.php";
+    private static final long STARTUP_TIMEOUT_MS = 20000L;
+    private boolean startupFinished;
+    private boolean startupErrorShown;
+    private final Runnable startupTimeout = new Runnable() {
+        @Override
+        public void run() {
+            if (!startupFinished) {
+                failStartup("Startup timed out while loading launcher data");
+            }
+        }
+    };
 
     public SplashFragment() {
         super();
@@ -90,7 +103,7 @@ public class SplashFragment extends MainActivity{
         @Override // android.view.View.OnClickListener
         public final void onClick(View view) {
             MainActivity.getMainActivity().dialogFragment.hide();
-            loadJsons();
+            openMain();
         }
     }
 
@@ -112,6 +125,259 @@ public class SplashFragment extends MainActivity{
     }
 
     public void loadJsons() {
+        startupFinished = false;
+        startupErrorShown = false;
+        mHandler.removeCallbacks(startupTimeout);
+        mHandler.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS);
+
+        Lists.faqlist.clear();
+        Lists.slist.clear();
+        Lists.nlist.clear();
+
+        Retrofit retrofit = new Retrofit.Builder()
+                .baseUrl("http://api-free.edgars.site/")
+                .addConverterFactory(GsonConverterFactory.create())
+                .build();
+        Interface sInterface = retrofit.create(Interface.class);
+
+        mFirebaseRemoteConfig = FirebaseRemoteConfig.getInstance();
+        mFirebaseRemoteConfig.setDefaultsAsync(R.xml.remote_config_defaults);
+        mFirebaseRemoteConfig.setConfigSettingsAsync(new FirebaseRemoteConfigSettings.Builder()
+                .setMinimumFetchIntervalInSeconds(1)
+                .build());
+        mFirebaseRemoteConfig.fetchAndActivate().addOnCompleteListener(MainActivity.getMainActivity(), task -> {
+            String configuredApiLink = task.isSuccessful()
+                    ? mFirebaseRemoteConfig.getString("api1Link")
+                    : null;
+            apiLink = isValidUrl(configuredApiLink) ? configuredApiLink : DEFAULT_API_LINK;
+            if (!task.isSuccessful()) {
+                Log.w("Google FireBase", "Remote Config unavailable, using bundled API link");
+            }
+            requestApi(sInterface);
+        });
+    }
+
+    private void requestApi(Interface sInterface) {
+        try {
+            sInterface.getApi(apiLink).enqueue(new Callback<Api>() {
+                @Override
+                public void onResponse(Call<Api> call, Response<Api> response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        failStartup("Launcher API returned an invalid response");
+                        return;
+                    }
+
+                    Api api = response.body();
+                    Integer launcherVersion = api.getLauncherVersion();
+                    if (launcherVersion != null && launcherVersion > BuildConfig.VERSION_CODE) {
+                        MainActivity.getMainActivity().openDialog(
+                                R.drawable.ic_launcher_question,
+                                "Доступна новая версия клиента!\nЗагрузить обновление?",
+                                "Да",
+                                "Нет",
+                                new downloadApk(api.getLauncherUrl(), api.getLauncherPath(), api.getLauncherName()),
+                                new noUpdate()
+                        );
+                        return;
+                    }
+
+                    if (api.getIsTest() && !api.getTestApi()) {
+                        MainActivity.getMainActivity().openDialog(
+                                R.drawable.ic_launcher_alert,
+                                "Тестовая версия клиента закрыта!\nОжидайте следующих тестов...",
+                                "Понял",
+                                null,
+                                new onDes(),
+                                null
+                        );
+                        return;
+                    }
+
+                    testApi = !api.getIsTest() || api.getTestApi();
+                    Lists.archives.clear();
+                    if (api.getArchives() != null) {
+                        Lists.archives.addAll(api.getArchives());
+                    }
+                    Lists.deleted.clear();
+                    if (api.getDeleted() != null) {
+                        Lists.deleted.addAll(api.getDeleted());
+                    }
+                    Lists.launcher_dan = new String[]{
+                            api.getLauncherUrl(),
+                            api.getLauncherPath(),
+                            api.getLauncherName()
+                    };
+
+                    if (!isValidUrl(api.getApi())) {
+                        failStartup("Launcher API did not provide the main API URL");
+                        return;
+                    }
+                    loadMainData(sInterface, api.getApi());
+                }
+
+                @Override
+                public void onFailure(Call<Api> call, Throwable throwable) {
+                    failStartup("Launcher API request failed: " + throwable.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            failStartup("Unable to start launcher API request: " + exception.getMessage());
+        }
+    }
+
+    private void loadMainData(Interface sInterface, String mainUrl) {
+        try {
+            sInterface.getMain(mainUrl).enqueue(new Callback<Main>() {
+                @Override
+                public void onResponse(Call<Main> call, Response<Main> response) {
+                    if (!response.isSuccessful() || response.body() == null) {
+                        failStartup("Main API returned an invalid response");
+                        return;
+                    }
+
+                    Main main = response.body();
+                    Lists.createCharacterUrl = main.getCreateCharacter();
+                    Lists.verifyAuthUrl = main.getVerifyAuth();
+                    Lists.accountDetailsUrl = main.getAccountDetails();
+                    Lists.isAccUrl = main.getIsAcc();
+                    Lists.skinsCDNUrl = main.getSkinsCDN();
+
+                    // The launcher should not be blocked by optional feeds.
+                    openMain();
+                    loadServers(sInterface, main.getServers());
+                    loadStories(sInterface, main.getStories());
+                    loadFaq(sInterface, main.getFaq());
+                }
+
+                @Override
+                public void onFailure(Call<Main> call, Throwable throwable) {
+                    failStartup("Main API request failed: " + throwable.getMessage());
+                }
+            });
+        } catch (RuntimeException exception) {
+            failStartup("Unable to start main API request: " + exception.getMessage());
+        }
+    }
+
+    private void loadServers(Interface sInterface, String url) {
+        if (!isValidUrl(url)) {
+            Log.w("Launcher", "Servers URL is missing");
+            return;
+        }
+        sInterface.getServers(url).enqueue(new Callback<List<Servers>>() {
+            @Override
+            public void onResponse(Call<List<Servers>> call, Response<List<Servers>> response) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    Log.w("Launcher", "Servers API unavailable");
+                    return;
+                }
+                Lists.slist.clear();
+                Lists.slist.addAll(response.body());
+                MainActivity.getMainActivity().mainFragment.UpdateServers();
+            }
+
+            @Override
+            public void onFailure(Call<List<Servers>> call, Throwable throwable) {
+                Log.w("Launcher", "Servers API request failed: " + throwable.getMessage());
+            }
+        });
+    }
+
+    private void loadStories(Interface sInterface, String url) {
+        if (!isValidUrl(url)) {
+            Log.w("Launcher", "Stories URL is missing");
+            return;
+        }
+        sInterface.getStories(url).enqueue(new Callback<List<News>>() {
+            @Override
+            public void onResponse(Call<List<News>> call, Response<List<News>> response) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    Log.w("Launcher", "Stories API unavailable");
+                    return;
+                }
+                Lists.nlist.clear();
+                for (News story : response.body()) {
+                    Lists.nlist.add(new News(
+                            story.getImageUrl(),
+                            story.getTitle(),
+                            story.getTitleBig(),
+                            story.getUrl(),
+                            story.getImageFullUrl()
+                    ));
+                }
+                MainActivity.getMainActivity().mainFragment.newsAdapter.notifyDataSetChanged();
+            }
+
+            @Override
+            public void onFailure(Call<List<News>> call, Throwable throwable) {
+                Log.w("Launcher", "Stories API request failed: " + throwable.getMessage());
+            }
+        });
+    }
+
+    private void loadFaq(Interface sInterface, String url) {
+        if (!isValidUrl(url)) {
+            Log.w("Launcher", "FAQ URL is missing");
+            return;
+        }
+        sInterface.getFaqList(url).enqueue(new Callback<FaqList>() {
+            @Override
+            public void onResponse(Call<FaqList> call, Response<FaqList> response) {
+                if (!response.isSuccessful() || response.body() == null || response.body().getArray() == null) {
+                    Log.w("Launcher", "FAQ API unavailable");
+                    return;
+                }
+                Lists.faqlist.clear();
+                Lists.faqlist.addAll(response.body().getArray());
+            }
+
+            @Override
+            public void onFailure(Call<FaqList> call, Throwable throwable) {
+                Log.w("Launcher", "FAQ API request failed: " + throwable.getMessage());
+            }
+        });
+    }
+
+    private boolean isValidUrl(String url) {
+        return url != null && (url.startsWith("http://") || url.startsWith("https://"));
+    }
+
+    private void openMain() {
+        if (startupFinished) {
+            return;
+        }
+        startupFinished = true;
+        startupErrorShown = false;
+        mHandler.removeCallbacks(startupTimeout);
+        sApi = true;
+        hide();
+        MainActivity.getMainActivity().mainFragment.upServerId();
+        mHandler.postDelayed(new MainOpen(), 300L);
+    }
+
+    private void failStartup(String reason) {
+        if (startupFinished || startupErrorShown) {
+            return;
+        }
+        MainActivity activity = MainActivity.getMainActivity();
+        if (activity == null || activity.dialogFragment == null) {
+            mHandler.postDelayed(() -> failStartup(reason), 500L);
+            return;
+        }
+        startupErrorShown = true;
+        mHandler.removeCallbacks(startupTimeout);
+        Log.e("Launcher", reason);
+        activity.openDialog(
+                R.drawable.ic_launcher_alert,
+                "Не удаётся загрузить данные запуска.\nПроверьте интернет и повторите попытку.",
+                "Повторить",
+                null,
+                new loadJsonRepit(),
+                null
+        );
+    }
+
+    private void loadJsonsLegacy() {
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("http://api-free.edgars.site/")
                 .addConverterFactory(GsonConverterFactory.create())

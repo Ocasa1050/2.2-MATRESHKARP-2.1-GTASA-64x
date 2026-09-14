@@ -743,7 +743,7 @@ public class MainFragment extends MainActivity {
                 serverinfo_layout.setVisibility(View.GONE);
                 server_alert.setVisibility(View.GONE);
             } else {
-                if (sApi) {
+                if (sApi && server_id >= 0 && server_id < Lists.slist.size()) {
                     ArrayList<Servers> servers = Lists.slist;
                     Servers ser = servers.get(server_id);
                     server_background.setColorFilter(Color.parseColor("#" + ser.getColor()) - 16777216);
@@ -770,6 +770,12 @@ public class MainFragment extends MainActivity {
                     } else {
                         server_alert.setVisibility(View.GONE);
                     }
+                } else {
+                    server_background.setColorFilter(Color.parseColor("#FF33AAD9"));
+                    server_item_image.setColorFilter(Color.parseColor("#FF33AAD9"));
+                    select_layout.setVisibility(View.VISIBLE);
+                    serverinfo_layout.setVisibility(View.GONE);
+                    server_alert.setVisibility(View.GONE);
                 }
             }
         } else {
