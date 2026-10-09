@@ -3,6 +3,7 @@ package ru.edgar.launcher.fragment;
 import android.animation.TimeInterpolator;
 import android.content.Context;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -14,28 +15,26 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.Task;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
-import retrofit2.Retrofit;
-import retrofit2.converter.gson.GsonConverterFactory;
 import ru.edgar.launcher.activity.MainActivity;
 import ru.edgar.launcher.model.Api;
 import ru.edgar.launcher.model.FaqList;
+import ru.edgar.launcher.model.FixedServer;
 import ru.edgar.launcher.model.Main;
 import ru.edgar.launcher.model.News;
 import ru.edgar.launcher.model.Servers;
-import ru.edgar.launcher.model.edgar;
 import ru.edgar.launcher.other.Interface;
 import ru.edgar.launcher.other.Lists;
+import ru.edgar.launcher.network.ApiClient;
 import ru.edgar.space.R;
 
 public class SplashFragment extends MainActivity{
@@ -47,6 +46,16 @@ public class SplashFragment extends MainActivity{
     String apiLink;
 
     private FirebaseRemoteConfig mFirebaseRemoteConfig;
+    private static final long STARTUP_WATCHDOG_MS = 20_000L;
+    private static final String API_BASE_URL = "http://api-free.edgars.site/";
+    private final Handler startupHandler = new Handler(Looper.getMainLooper());
+    private final ArrayList<Call<?>> startupCalls = new ArrayList<>();
+    private long startupAttempt;
+    private int pendingStartupRequests;
+    private boolean startupInProgress;
+    private boolean waitingForUpdateDecision;
+    private boolean startupIssueShown;
+    private Runnable startupWatchdog;
 
     public SplashFragment() {
         super();
@@ -65,10 +74,6 @@ public class SplashFragment extends MainActivity{
         viewGroup.setLayoutParams(layoutParams);
         splash_logo = (ImageView) viewGroup.findViewById(R.id.splash_logo);
 
-        Lists.faqlist = new ArrayList<>();
-        Lists.slist = new ArrayList<>();
-        Lists.nlist = new ArrayList<>();
-
         loadJsons();
 
         viewGroup.setVisibility(View.GONE);
@@ -80,17 +85,31 @@ public class SplashFragment extends MainActivity{
 
         @Override // android.view.View.OnClickListener
         public final void onClick(View view) {
-            loadJsons();
             MainActivity.getMainActivity().dialogFragment.hide();
+            loadJsons();
         }
     }
 
     public class noUpdate implements View.OnClickListener {
+        private final long attempt;
+        private final Api api;
+        private final Interface apiService;
+
+        public noUpdate(long attempt, Api api, Interface apiService) {
+            this.attempt = attempt;
+            this.api = api;
+            this.apiService = apiService;
+        }
 
         @Override // android.view.View.OnClickListener
         public final void onClick(View view) {
             MainActivity.getMainActivity().dialogFragment.hide();
-            loadJsons();
+            if (!isCurrentAttempt(attempt)) {
+                return;
+            }
+            waitingForUpdateDecision = false;
+            startStartupWatchdog(attempt);
+            continueWithApi(attempt, api, apiService);
         }
     }
 
@@ -106,219 +125,354 @@ public class SplashFragment extends MainActivity{
         @Override // android.view.View.OnClickListener
         public final void onClick(View view) {
             MainActivity.getMainActivity().dialogFragment.hide();
+            stopStartupLoad();
             MainActivity.getMainActivity().splashFragment.hide();
             MainActivity.getMainActivity().downloadFragment.startDownloadApk(launcher[0], launcher[1], launcher[2]);
         }
     }
 
     public void loadJsons() {
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl("http://api-free.edgars.site/")
-                .addConverterFactory(GsonConverterFactory.create())
-                .build();
+        final long attempt = ++startupAttempt;
+        stopStartupLoad();
+        startupAttempt = attempt;
+        startupInProgress = true;
+        waitingForUpdateDecision = false;
+        startupIssueShown = false;
+        pendingStartupRequests = 0;
+        MainActivity.sApi = true;
+        MainActivity.testApi = true;
 
-        Interface sInterface = retrofit.create(Interface.class);
+        resetStartupLists();
+        showHomeImmediately(attempt);
+        startStartupWatchdog(attempt);
 
-        mFirebaseRemoteConfig = FirebaseRemoteConfig.getInstance();
-        FirebaseRemoteConfigSettings configSettings = new FirebaseRemoteConfigSettings.Builder()
-                .setMinimumFetchIntervalInSeconds(1) // 3600 (published)
-                .build();
+        try {
+            Interface apiService = ApiClient.create(API_BASE_URL).create(Interface.class);
+            mFirebaseRemoteConfig = FirebaseRemoteConfig.getInstance();
+            FirebaseRemoteConfigSettings configSettings = new FirebaseRemoteConfigSettings.Builder()
+                    .setMinimumFetchIntervalInSeconds(1)
+                    .build();
 
-        mFirebaseRemoteConfig.setConfigSettingsAsync(configSettings);
+            mFirebaseRemoteConfig.setConfigSettingsAsync(configSettings)
+                    .addOnCompleteListener(MainActivity.getMainActivity(), settingsTask -> {
+                        if (!isCurrentAttempt(attempt)) {
+                            return;
+                        }
+                        if (!settingsTask.isSuccessful()) {
+                            stopStartupLoadWithIssue(attempt, "Remote Config settings", settingsTask.getException());
+                            return;
+                        }
+                        fetchApiLink(attempt, apiService);
+                    });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "Startup initialization", exception);
+        }
+    }
 
-        mFirebaseRemoteConfig.fetchAndActivate().addOnCompleteListener(MainActivity.getMainActivity(), new OnCompleteListener<Boolean>() {
-            @Override
-            public void onComplete(@NonNull Task<Boolean> task) {
-                if (task.isSuccessful()) {
-                    apiLink = mFirebaseRemoteConfig.getString("api1Link");
+    private void resetStartupLists() {
+        if (Lists.slist == null) {
+            Lists.slist = new ArrayList<>();
+        } else {
+            Lists.slist.clear();
+        }
+        if (Lists.nlist == null) {
+            Lists.nlist = new ArrayList<>();
+        } else {
+            Lists.nlist.clear();
+        }
+        if (Lists.faqlist == null) {
+            Lists.faqlist = new ArrayList<>();
+        } else {
+            Lists.faqlist.clear();
+        }
+
+        if (MainActivity.server_id == null) {
+            MainActivity.server_id = FixedServer.DEFAULT_ID;
+        }
+        Lists.slist.add(FixedServer.create(MainActivity.server_id));
+    }
+
+    private void showHomeImmediately(long attempt) {
+        startupHandler.postDelayed(() -> {
+            if (attempt != startupAttempt) {
+                return;
+            }
+            MainActivity activity = MainActivity.getMainActivity();
+            if (activity == null || activity.mainFragment == null) {
+                return;
+            }
+            activity.splashFragment.hide();
+            activity.mainFragment.UpdateServers();
+            activity.mainFragment.upServerId();
+            activity.mainFragment.show();
+        }, 100L);
+    }
+
+    private void fetchApiLink(long attempt, Interface apiService) {
+        try {
+            mFirebaseRemoteConfig.fetchAndActivate()
+                    .addOnCompleteListener(MainActivity.getMainActivity(), task -> {
+                        if (!isCurrentAttempt(attempt)) {
+                            return;
+                        }
+                        if (!task.isSuccessful()) {
+                            stopStartupLoadWithIssue(attempt, "Remote Config fetch", task.getException());
+                            return;
+                        }
+                        apiLink = mFirebaseRemoteConfig.getString("api1Link");
+                        if (isBlank(apiLink)) {
+                            stopStartupLoadWithIssue(attempt, "Remote Config api1Link", null);
+                            return;
+                        }
+                        requestApiConfig(attempt, apiService, apiLink);
+                    });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "Remote Config fetch", exception);
+        }
+    }
+
+    private void requestApiConfig(long attempt, Interface apiService, String link) {
+        if (isBlank(link)) {
+            stopStartupLoadWithIssue(attempt, "API link", null);
+            return;
+        }
+        try {
+            enqueueStartupCall(attempt, "API config", apiService.getApi(link), api -> {
+                if (api.getLauncherVersion() == null) {
+                    stopStartupLoadWithIssue(attempt, "API config version", null);
+                    return;
+                }
+                if (api.getLauncherVersion() != 34) {
+                    waitingForUpdateDecision = true;
+                    cancelStartupWatchdog();
+                    MainActivity.getMainActivity().openDialog(
+                            R.drawable.ic_launcher_question,
+                            "Доступна новая версия клиента!\nЗагрузить обновление?",
+                            "Да",
+                            "Нет",
+                            new downloadApk(api.getLauncherUrl(), api.getLauncherPath(), api.getLauncherName()),
+                            new noUpdate(attempt, api, apiService)
+                    );
+                    return;
+                }
+                continueWithApi(attempt, api, apiService);
+            });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "API config", exception);
+        }
+    }
+
+    private void continueWithApi(long attempt, Api api, Interface apiService) {
+        if (!isCurrentAttempt(attempt)) {
+            return;
+        }
+
+        MainActivity.testApi = !api.getIsTest() || api.getTestApi();
+        if (!MainActivity.testApi) {
+            Toast.makeText(
+                    MainActivity.getMainActivity(),
+                    "Тестовая версия клиента закрыта. Используется фиксированный сервер.",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+
+        Lists.archives.clear();
+        if (api.getArchives() != null) {
+            Lists.archives.addAll(api.getArchives());
+        }
+        Lists.deleted.clear();
+        if (api.getDeleted() != null) {
+            Lists.deleted.addAll(api.getDeleted());
+        }
+        Lists.launcher_dan = new String[]{
+                api.getLauncherUrl(),
+                api.getLauncherPath(),
+                api.getLauncherName()
+        };
+
+        if (isBlank(api.getApi())) {
+            stopStartupLoadWithIssue(attempt, "Main config link", null);
+            return;
+        }
+        try {
+            enqueueStartupCall(attempt, "Main config", apiService.getMain(api.getApi()), main -> {
+                Lists.createCharacterUrl = main.getCreateCharacter();
+                Lists.verifyAuthUrl = main.getVerifyAuth();
+                Lists.accountDetailsUrl = main.getAccountDetails();
+                Lists.isAccUrl = main.getIsAcc();
+                Lists.skinsCDNUrl = main.getSkinsCDN();
+
+                if (isBlank(main.getStories())) {
+                    Log.w("Startup", "Stories URL is missing; continuing with the fixed server.");
                 } else {
-                    Log.e("Google FireBase", "SLIHILAC HOPA");
+                    requestStories(attempt, apiService, main.getStories());
+                }
+                if (isBlank(main.getFaq())) {
+                    Log.w("Startup", "FAQ URL is missing; continuing with the fixed server.");
+                } else {
+                    requestFaq(attempt, apiService, main.getFaq());
+                }
+            });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "Main config", exception);
+        }
+    }
+
+    private void requestStories(long attempt, Interface apiService, String link) {
+        try {
+            enqueueStartupCall(attempt, "Stories", apiService.getStories(link), news -> {
+                Lists.nlist.clear();
+                for (News item : news) {
+                    if (item != null) {
+                        Lists.nlist.add(new News(
+                                item.getImageUrl(),
+                                item.getTitle(),
+                                item.getTitleBig(),
+                                item.getUrl(),
+                                item.getImageFullUrl()
+                        ));
+                    }
+                }
+                MainActivity activity = MainActivity.getMainActivity();
+                if (activity != null && activity.mainFragment != null && activity.mainFragment.newsAdapter != null) {
+                    activity.mainFragment.newsAdapter.notifyDataSetChanged();
+                }
+            });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "Stories", exception);
+        }
+    }
+
+    private void requestFaq(long attempt, Interface apiService, String link) {
+        try {
+            enqueueStartupCall(attempt, "FAQ", apiService.getFaqList(link), faqResponse -> {
+                Lists.faqlist.clear();
+                if (faqResponse.getArray() != null) {
+                    Lists.faqlist.addAll(faqResponse.getArray());
+                }
+            });
+        } catch (RuntimeException exception) {
+            stopStartupLoadWithIssue(attempt, "FAQ", exception);
+        }
+    }
+
+    private interface StartupResponse<T> {
+        void onResponse(T body);
+    }
+
+    private <T> void enqueueStartupCall(long attempt, String stage, Call<T> call, StartupResponse<T> handler) {
+        if (!isCurrentAttempt(attempt)) {
+            call.cancel();
+            return;
+        }
+        startupCalls.add(call);
+        pendingStartupRequests++;
+        try {
+            call.enqueue(new Callback<T>() {
+                @Override
+                public void onResponse(Call<T> call, Response<T> response) {
+                    startupCalls.remove(call);
+                    pendingStartupRequests = Math.max(0, pendingStartupRequests - 1);
+                    if (!isCurrentAttempt(attempt)) {
+                        return;
+                    }
+                    if (!response.isSuccessful() || response.body() == null) {
+                        stopStartupLoadWithIssue(
+                                attempt,
+                                stage + " HTTP " + response.code(),
+                                null
+                        );
+                        return;
+                    }
+                    try {
+                        handler.onResponse(response.body());
+                    } catch (RuntimeException exception) {
+                        stopStartupLoadWithIssue(attempt, stage, exception);
+                        return;
+                    }
+                    finishStartupLoadIfIdle(attempt);
                 }
 
-                sInterface.getApi(apiLink).enqueue(new Callback<Api>() {
-                    public void onResponse(Call<Api> call, Response<Api> response) {
-                        if(response.isSuccessful())
-                        {
-                            if(response.body() != null) {
-                                if(response.body().getLauncherVersion() != 34) {
-                                    MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_question, "Доступна новая версия клиента!\nЗагрузить обновление?", "Да", "Нет", new downloadApk(response.body().getLauncherUrl(), response.body().getLauncherPath(), response.body().getLauncherName()), new noUpdate());
-                                } else {
-                                    if (response.body().getIsTest()) {
-                                        if (!response.body().getTestApi()) {
-                                            MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "Тестовая версия клиента закрыта!\nОжидайте следующих тестов...", "Понял", null, new onDes(), null);
-                                        }
-                                        testApi = response.body().getTestApi();
-                                    }
-                                    Lists.archives.clear();
-                                    Lists.archives.addAll(response.body().getArchives());
-                                    Lists.deleted.clear();
-                                    Lists.deleted.addAll(response.body().getDeleted());
-
-                                    Lists.launcher_dan = new String[]{response.body().getLauncherUrl(), response.body().getLauncherPath(), response.body().getLauncherName()};
-
-                                    sInterface.getMain(response.body().getApi()).enqueue(new Callback<Main>() {
-                                        @Override
-                                        public void onResponse(Call<Main> call, Response<Main> response) {
-
-                                            String storiesLink = response.body().getStories();
-
-                                            String faqLink = response.body().getFaq();
-
-                                            Lists.createCharacterUrl = response.body().getCreateCharacter();
-
-                                            Lists.verifyAuthUrl = response.body().getVerifyAuth();
-
-                                            Lists.accountDetailsUrl = response.body().getAccountDetails();
-
-                                            Lists.isAccUrl = response.body().getIsAcc();
-
-                                            Lists.skinsCDNUrl = response.body().getSkinsCDN();
-
-                                            sInterface.getServers(response.body().getServers()).enqueue(new Callback<List<Servers>>() {
-                                                @Override
-                                                public void onResponse(Call<List<Servers>> call, Response<List<Servers>> response) {
-
-                                                    List<Servers> servers = response.body();
-                                                    for (Servers server : servers) {
-                                                        Lists.slist.add(new Servers(server.getName(), server.getColor(), server.getStatus(), server.getRecommend(), server.getNewStatus(), server.getEdgarHost(), server.getEdgarPort(), server.getId()));
-                                                    }
-
-                                                    ArrayList<Servers> serversItem = Lists.slist;
-                                                    ArrayList<Servers> serversrec = new ArrayList<>();
-                                                    ArrayList<Servers> serversnew = new ArrayList<>();
-                                                    ArrayList<Servers> serversbce = new ArrayList<>();
-                                                    ArrayList<Servers> serverss = new ArrayList<>();
-
-                                                    //Log.e("edgar", "serversItem.size() = " + serversItem.size());
-
-                                                    boolean s = false;
-                                                    boolean n = false;
-                                                    int i;
-
-                                                    for (i = 0; i < serversItem.size(); i++) {
-                                                        Servers serversss = serversItem.get(i);
-                                                        //Log.e("edgar", "1 id = " + i);
-                                                        if (!serversss.getRecommend()) {
-                                                            //Log.e("edgar", "1 id = " + i);
-                                                            //Log.e("edgar", "recommend = false");
-                                                            serversbce.add(serversss);
-                                                        }
-                                                        //serversItem.remove(i);
-                                                    }
-
-                                                    for (i = 0; i < serversItem.size(); i++) {
-                                                        Servers serversss = serversItem.get(i);
-                                                        //Log.e("edgar", "2 id = " + i);
-                                                        if (!serversss.getNewStatus() && serversss.getRecommend()) {
-                                                            if (!s) {
-                                                                //Log.e("edgar", "2 id = " + i);
-                                                                //Log.e("edgar", "recommend = true, NewStatus = false (rec)");
-                                                                serversrec.add(serversss);
-                                                                serversItem.remove(i);
-                                                                s = true;
-                                                                i--;
-                                                            } else {
-                                                                serversbce.add(serversss);
-                                                                //Log.e("edgar", "recommend = false");
-                                                            }
-                                                        }
-                                                    }
-
-                                                    for (i = 0; i < serversItem.size(); i++) {
-                                                        Servers serversss = serversItem.get(i);
-                                                        //Log.e("edgar", "3 id = " + i);
-                                                        if (serversss.getNewStatus() && serversss.getRecommend()) {
-                                                            if (!n) {
-                                                                //Log.e("edgar", "3 id = " + i);
-                                                                //Log.e("edgar", "recommend = true, NewStatus = true (new)");
-                                                                serversnew.add(serversss);
-                                                                serversItem.remove(i);
-                                                                n = true;
-                                                                i--;
-                                                            } else {
-                                                                serversbce.add(serversss);
-                                                                //Log.e("edgar", "recommend = false");
-                                                            }
-                                                        }
-                                                    }
-                                                    if (serversrec.size() >= 1) {
-                                                        serverss.addAll(serversrec);
-                                                        //Log.e("edgar", "serversrec.size() > " + serversrec.size());
-
-                                                    }
-                                                    if (serversnew.size() >= 1) {
-                                                        serverss.addAll(serversnew);
-                                                    }
-                                                    serverss.addAll(serversbce);
-                                                    //Log.e("edgar", "serversItem.3 > " + serverss.size());
-                                                    Lists.slist = serverss;
-
-                                                    sInterface.getStories(storiesLink).enqueue(new Callback<List<News>>() {
-                                                        @Override
-                                                        public void onResponse(Call<List<News>> call, Response<List<News>> response) {
-
-                                                            List<News> news = response.body();
-
-                                                            for (News storie : news) {
-                                                                Lists.nlist.add(new News(storie.getImageUrl(), storie.getTitle(), storie.getTitleBig(), storie.getUrl(), storie.getImageFullUrl()));
-                                                            }
-
-                                                            sInterface.getFaqList(faqLink).enqueue(new Callback<FaqList>() {
-                                                                public void onFailure(Call<FaqList> call, Throwable th) {
-                                                                }
-
-                                                                public void onResponse(Call<FaqList> call, Response<FaqList> response) {
-                                                                    if (response.body() != null) {
-                                                                        Lists.faqlist.clear();
-                                                                        Lists.faqlist.addAll(response.body().getArray());
-                                                                    }
-
-                                                                    sApi = true;
-                                                                    if (sApi && testApi/* && isPermissions*/) {
-                                                                        hide();
-                                                                        //
-                                                                        MainActivity.getMainActivity().mainFragment.upServerId();
-                                                                        //
-                                                                        mHandler.postDelayed(new MainOpen(), 300L);
-                                                                    }
-                                                                }
-                                                            });
-                                                        }
-
-                                                        @Override
-                                                        public void onFailure(Call<List<News>> call, Throwable t) {
-                                                        }
-                                                    });
-                                                }
-
-                                                @Override
-                                                public void onFailure(Call<List<Servers>> call, Throwable t) {
-                                                }
-                                            });
-
-                                        }
-
-                                        @Override
-                                        public void onFailure(Call<Main> call, Throwable t) {
-                                        }
-                                    });
-                                }
-                            } else {
-                                Log.e("api-", "api----");
-                                MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "Не удаётся установить соединение с сервером!\nПовторите попытку позже.", "Повторить", null, new loadJsonRepit(), null);
-                            }
-                        } else {
-                            Log.e("api-", "api---1-");
-                            MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "Не удаётся установить соединение с сервером!\nПовторите попытку позже.", "Повторить", null, new loadJsonRepit(), null);
-                        }
+                @Override
+                public void onFailure(Call<T> call, Throwable error) {
+                    startupCalls.remove(call);
+                    pendingStartupRequests = Math.max(0, pendingStartupRequests - 1);
+                    if (isCurrentAttempt(attempt)) {
+                        stopStartupLoadWithIssue(attempt, stage, error);
                     }
-                    public void onFailure(Call<Api> call, Throwable th) {
-                        Log.e("api-", "api----" + th.toString());
-                        MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "Не удаётся установить соединение с сервером!\nПовторите попытку позже.", "Повторить", null, new loadJsonRepit(), null);
-                    }
-                });
+                }
+            });
+        } catch (RuntimeException exception) {
+            startupCalls.remove(call);
+            pendingStartupRequests = Math.max(0, pendingStartupRequests - 1);
+            stopStartupLoadWithIssue(attempt, stage, exception);
+        }
+    }
+
+    private void finishStartupLoadIfIdle(long attempt) {
+        if (isCurrentAttempt(attempt) && pendingStartupRequests == 0 && !waitingForUpdateDecision) {
+            startupInProgress = false;
+            cancelStartupWatchdog();
+        }
+    }
+
+    private void startStartupWatchdog(long attempt) {
+        cancelStartupWatchdog();
+        startupWatchdog = () -> {
+            if (isCurrentAttempt(attempt)) {
+                stopStartupLoadWithIssue(
+                        attempt,
+                        "Startup watchdog",
+                        new TimeoutException("Startup data load exceeded 20 seconds")
+                );
             }
-        });
+        };
+        startupHandler.postDelayed(startupWatchdog, STARTUP_WATCHDOG_MS);
+    }
+
+    private void cancelStartupWatchdog() {
+        if (startupWatchdog != null) {
+            startupHandler.removeCallbacks(startupWatchdog);
+            startupWatchdog = null;
+        }
+    }
+
+    private void stopStartupLoadWithIssue(long attempt, String stage, Throwable error) {
+        if (!isCurrentAttempt(attempt)) {
+            return;
+        }
+        Log.w("Startup", stage + " failed; continuing with the fixed server.", error);
+        stopStartupLoad();
+        if (!startupIssueShown) {
+            startupIssueShown = true;
+            MainActivity activity = MainActivity.getMainActivity();
+            if (activity != null) {
+                Toast.makeText(
+                        activity,
+                        "تعذر تحميل بعض البيانات. يمكنك استخدام السيرفر الثابت.",
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+        }
+    }
+
+    private void stopStartupLoad() {
+        startupInProgress = false;
+        waitingForUpdateDecision = false;
+        cancelStartupWatchdog();
+        for (Call<?> call : new ArrayList<>(startupCalls)) {
+            call.cancel();
+        }
+        startupCalls.clear();
+        pendingStartupRequests = 0;
+    }
+
+    private boolean isCurrentAttempt(long attempt) {
+        return startupInProgress && startupAttempt == attempt;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     public void show() {

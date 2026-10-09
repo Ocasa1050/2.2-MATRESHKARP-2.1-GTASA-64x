@@ -8,6 +8,8 @@ import android.graphics.Color;
 import android.graphics.Point;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -25,7 +27,9 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
@@ -36,6 +40,8 @@ import java.io.RandomAccessFile;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -47,11 +53,13 @@ import ru.edgar.launcher.adapter.NewsAdapter;
 import ru.edgar.launcher.model.Archive;
 import ru.edgar.launcher.model.ArchivePath;
 import ru.edgar.launcher.model.Deleted;
+import ru.edgar.launcher.model.FixedServer;
 import ru.edgar.launcher.model.FilesList;
 import ru.edgar.launcher.model.Servers;
 import ru.edgar.launcher.model.edgar;
 import ru.edgar.launcher.other.Interface;
 import ru.edgar.launcher.other.Lists;
+import ru.edgar.launcher.network.ApiClient;
 import ru.edgar.launcher.other.Utils;
 import ru.edgar.space.R;
 import ru.edgar.space.SAMP;
@@ -94,6 +102,8 @@ public class MainFragment extends MainActivity {
     public ArrayList<String> paths = new ArrayList<>();
 
     public boolean isTo = true;
+    private final ExecutorService gamePreparationExecutor = Executors.newSingleThreadExecutor();
+    private final Handler playRequestHandler = new Handler(Looper.getMainLooper());
 
     public MainFragment() {
         super();
@@ -350,14 +360,188 @@ public class MainFragment extends MainActivity {
             }
         });
 
-        select_server_layout.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), select_server_layout));
+        // Use the non-blocking fixed-server launch path instead of the legacy callback chain above.
+        btn_play.setOnClickListener(view -> beginServerEntry());
 
-        select_server_layout.setOnClickListener(v -> {
-            MainActivity.getMainActivity().serverSelectFragment.show();
-        });
+        select_server_layout.setOnClickListener(null);
+        select_server_layout.setClickable(false);
 
         bonus_layout.setVisibility(View.GONE);
         viewGroup.setVisibility(View.GONE);
+    }
+
+    private void beginServerEntry() {
+        MainActivity activity = MainActivity.getMainActivity();
+        if (!MainActivity.isAuth) {
+            activity.authFragment.show();
+            return;
+        }
+
+        FirebaseAuth firebaseAuth = FirebaseAuth.getInstance();
+        FirebaseUser user = firebaseAuth.getCurrentUser();
+        if (user == null) {
+            MainActivity.isAuth = false;
+            activity.authFragment.show();
+            return;
+        }
+
+        if (MainActivity.server_id == null) {
+            MainActivity.server_id = FixedServer.DEFAULT_ID;
+        }
+        setFixedServerId(MainActivity.server_id);
+
+        DatabaseReference nicknameReference = FirebaseDatabase.getInstance()
+                .getReference()
+                .child("Users")
+                .child("User-servers")
+                .child("Server_" + MainActivity.server_id)
+                .child(user.getUid())
+                .child("nick");
+
+        activity.loadingFragment.show();
+        final boolean[] requestPending = {true};
+        final Runnable[] timeout = new Runnable[1];
+        ValueEventListener nicknameListener = new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                if (!requestPending[0]) {
+                    return;
+                }
+                requestPending[0] = false;
+                playRequestHandler.removeCallbacks(timeout[0]);
+
+                String nickname = snapshot.getValue(String.class);
+                if (nickname == null || nickname.trim().isEmpty()) {
+                    activity.loadingFragment.hide();
+                    activity.createCharacterFragment.show();
+                    hide();
+                    return;
+                }
+
+                MainActivity.nickName = nickname;
+                ArrayList<Archive> archives = Lists.archives == null
+                        ? new ArrayList<>()
+                        : new ArrayList<>(Lists.archives);
+                ArrayList<Deleted> deletedFiles = Lists.deleted == null
+                        ? new ArrayList<>()
+                        : new ArrayList<>(Lists.deleted);
+                gamePreparationExecutor.execute(() -> prepareGameFilesAndLaunch(archives, deletedFiles));
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                if (!requestPending[0]) {
+                    return;
+                }
+                requestPending[0] = false;
+                playRequestHandler.removeCallbacks(timeout[0]);
+                activity.loadingFragment.hide();
+                Toast.makeText(activity, "Не удалось загрузить персонажа. Проверьте подключение.", Toast.LENGTH_LONG).show();
+                Log.w("MainFragment", "Nickname lookup failed", error.toException());
+            }
+        };
+
+        timeout[0] = () -> {
+            if (!requestPending[0]) {
+                return;
+            }
+            requestPending[0] = false;
+            nicknameReference.removeEventListener(nicknameListener);
+            activity.loadingFragment.hide();
+            Toast.makeText(activity, "Сервер не ответил. Попробуйте ещё раз.", Toast.LENGTH_LONG).show();
+        };
+        playRequestHandler.postDelayed(timeout[0], 15_000L);
+        nicknameReference.addListenerForSingleValueEvent(nicknameListener);
+    }
+
+    private void prepareGameFilesAndLaunch(ArrayList<Archive> archives, ArrayList<Deleted> deletedFiles) {
+        ArrayList<String> paths = new ArrayList<>();
+        ArrayList<String> unzipTypes = new ArrayList<>();
+        ArrayList<String> zipPaths = new ArrayList<>();
+        ArrayList<String> downloadUrls = new ArrayList<>();
+        long downloadSize = 0;
+
+        try {
+            for (Deleted deleted : deletedFiles) {
+                if (deleted == null || deleted.getPath() == null) {
+                    continue;
+                }
+                File file = new File(deleted.getPath());
+                if (file.exists()) {
+                    if (file.isDirectory()) {
+                        deleteDirectory(file);
+                    } else {
+                        file.delete();
+                    }
+                }
+            }
+
+            for (Archive archive : archives) {
+                if (archive == null || archive.getPaths() == null) {
+                    continue;
+                }
+                long localSize = 0;
+                for (ArchivePath archivePath : archive.getPaths()) {
+                    if (archivePath != null && archivePath.getPath() != null) {
+                        localSize += getFileOrDirectorySize(archivePath.getPath());
+                    }
+                }
+                if (archive.getSize() == localSize) {
+                    continue;
+                }
+
+                String archiveUrl = archive.getUrls();
+                if (archiveUrl == null || archiveUrl.trim().isEmpty()) {
+                    continue;
+                }
+                for (ArchivePath archivePath : archive.getPaths()) {
+                    if (archivePath != null && archivePath.getPath() != null) {
+                        paths.add(archivePath.getPath());
+                    }
+                }
+                downloadUrls.add(archiveUrl);
+                unzipTypes.add(archive.getType());
+                zipPaths.add(archive.getZip_path());
+                downloadSize += archive.getSize();
+            }
+        } catch (Exception error) {
+            Log.e("MainFragment", "Game file validation failed", error);
+            MainActivity activity = MainActivity.getMainActivity();
+            activity.runOnUiThread(() -> {
+                activity.loadingFragment.hide();
+                Toast.makeText(activity, "Не удалось проверить файлы игры.", Toast.LENGTH_LONG).show();
+            });
+            return;
+        }
+
+        final long totalDownloadSize = downloadSize;
+        MainActivity activity = MainActivity.getMainActivity();
+        activity.runOnUiThread(() -> {
+            activity.loadingFragment.hide();
+            if (!downloadUrls.isEmpty()) {
+                activity.dialogFragment.show(
+                        R.drawable.ic_launcher_question,
+                        "Доступно обновление!\nЗагрузить " + Utils.bytesIntoHumanReadable(totalDownloadSize) + "?",
+                        "Да",
+                        "Нет",
+                        new DownloadStart(downloadUrls, paths, unzipTypes, zipPaths),
+                        new DialogFragment.closeDialog()
+                );
+            } else {
+                activity.startActivity(new Intent(activity, SAMP.class));
+            }
+        });
+    }
+
+    private void setFixedServerId(Integer id) {
+        if (Lists.slist == null) {
+            Lists.slist = new ArrayList<>();
+        }
+        Lists.slist.clear();
+        Lists.slist.add(FixedServer.create(id));
+        if (MainActivity.getMainActivity().serverSelectFragment != null) {
+            MainActivity.getMainActivity().serverSelectFragment.refreshServers();
+        }
     }
 
     public static void deleteDirectory(File directory) {
@@ -621,43 +805,47 @@ public class MainFragment extends MainActivity {
         viewGroup.animate().setDuration(450L).start();
         //
         System.out.println(MainActivity.getMainActivity().auth1);
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl("http://api-free.edgars.site/")
-                .addConverterFactory(GsonConverterFactory.create())
-                .build();
+        if (MainActivity.getMainActivity().auth1 == null || MainActivity.getMainActivity().auth1.trim().isEmpty()) {
+            Log.w("MainFragment", "Skipping launcher status check because its URL is unavailable.");
+            return;
+        }
+        Retrofit retrofit = ApiClient.create("http://api-free.edgars.site/");
 
         Interface sInterface = retrofit.create(Interface.class);
 
-        sInterface.getAuth(MainActivity.getMainActivity().auth1).enqueue(new Callback<edgar>() {
+        try {
+            sInterface.getAuth(MainActivity.getMainActivity().auth1).enqueue(new Callback<edgar>() {
 
             public void onResponse(Call<edgar> call, Response<edgar> response) {
-                System.out.println(response.body());
-                if (response.isSuccessful()) {
-                    String edgar = response.body().getAuth();
-                    System.out.println(edgar);
-                    System.out.println(response.body());
-                    if(Integer.parseInt(edgar) == 200)
-                    {
-                        Toast.makeText(MainActivity.getMainActivity(),"[EDGAR 3.0]: Лаунчер загружаеться!", Toast.LENGTH_SHORT).show();
-                        return;
-                    } else if(Integer.parseInt(edgar) == 201) {
-                        MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "К сожелению лаунчер не работает в данный момент...", "Понял", null, new MainActivity.onDes(), null);
-                    } else if(Integer.parseInt(edgar) == 202) {
-                        MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "К сожелению лаунчер не работает в данный момент...\nПодпишитесь на тгк t.me/edgar_gamedev", "Понял", null, new MainActivity.onDes(), null);
-                    } else if(Integer.parseInt(edgar) == 203) {
-                        MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "К сожелению эта версия лаунчера устарела...\nПодпишитесь на тгк t.me/edgar_gamedev", "Понял", null, new MainActivity.onDes(), null);
+                if (!response.isSuccessful() || response.body() == null) {
+                    Log.w("MainFragment", "Launcher status endpoint returned no usable response.");
+                    return;
+                }
+                String status = response.body().getAuth();
+                if (status == null) {
+                    Log.w("MainFragment", "Launcher status response did not include an auth status.");
+                    return;
+                }
+                try {
+                    int statusCode = Integer.parseInt(status);
+                    if (statusCode == 200) {
+                        Toast.makeText(MainActivity.getMainActivity(), "[EDGAR 3.0]: Лаунчер загружаеться!", Toast.LENGTH_SHORT).show();
                     } else {
-                        MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "К сожелению лаунчер не работает в данный момент...\nПодпишитесь на тгк t.me/edgar_gamedev", "Понял", null, new MainActivity.onDes(), null);
+                        Log.w("MainFragment", "Remote launcher status " + statusCode + " ignored; keeping the main screen available.");
                     }
+                } catch (NumberFormatException error) {
+                    Log.w("MainFragment", "Invalid launcher status value: " + status, error);
                 }
             }
 
             @Override
             public void onFailure(Call<edgar> call, Throwable t) {
-                System.out.println(t.toString());
-                MainActivity.getMainActivity().openDialog(R.drawable.ic_launcher_alert, "В данный момент лаунчер был отключен от EDGAR 3.0 WEB\nПодпишитесь на тгк t.me/edgar_gamedev", "Понял", null, new MainActivity.onDes(), null);
+                Log.w("MainFragment", "Launcher status request failed; keeping the main screen available.", t);
             }
-        });
+            });
+        } catch (RuntimeException error) {
+            Log.w("MainFragment", "Could not start the launcher status request.", error);
+        }
         //
     }
 
@@ -695,13 +883,23 @@ public class MainFragment extends MainActivity {
 
     public void upServerId() {
         if (isAuth) {
-            FirebaseDatabase.getInstance().getReference().child("Users").child("User-server").child(FirebaseAuth.getInstance().getCurrentUser().getUid()).child("server-id").addValueEventListener(new ValueEventListener() {
+            FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+            if (currentUser == null) {
+                MainActivity.isAuth = false;
+                server_id = FixedServer.DEFAULT_ID;
+                setFixedServerId(server_id);
+                nickName = null;
+                UpdateServers();
+                return;
+            }
+            FirebaseDatabase.getInstance().getReference().child("Users").child("User-server").child(currentUser.getUid()).child("server-id").addListenerForSingleValueEvent(new ValueEventListener() {
                 @Override
                 public void onDataChange(@NonNull DataSnapshot snapshot) {
                     Integer paramInt = snapshot.getValue(Integer.class);
-                    server_id = paramInt;
+                    server_id = paramInt == null ? FixedServer.DEFAULT_ID : paramInt;
+                    setFixedServerId(server_id);
                     Log.i("edgar", "server_id = " + server_id);
-                    FirebaseDatabase.getInstance().getReference().child("Users").child("User-servers").child("Server_" + MainActivity.server_id).child(FirebaseAuth.getInstance().getUid()).child("nick").addValueEventListener(new ValueEventListener() {
+                    FirebaseDatabase.getInstance().getReference().child("Users").child("User-servers").child("Server_" + MainActivity.server_id).child(currentUser.getUid()).child("nick").addListenerForSingleValueEvent(new ValueEventListener() {
                         @Override
                         public void onDataChange(@NonNull DataSnapshot snapshot) {
                             if (snapshot.getValue(String.class) == null) {
@@ -717,68 +915,85 @@ public class MainFragment extends MainActivity {
 
                         @Override
                         public void onCancelled(@NonNull DatabaseError error) {
-
+                            Log.w("MainFragment", "Could not load the saved character name.", error.toException());
+                            MainActivity.nickName = null;
+                            UpdateServers();
                         }
                     });
                 }
 
                 @Override
                 public void onCancelled(@NonNull DatabaseError error) {
+                    Log.w("MainFragment", "Could not load the saved server ID.", error.toException());
+                    server_id = FixedServer.DEFAULT_ID;
+                    setFixedServerId(server_id);
+                    UpdateServers();
                 }
             });
         } else {
             nickName = null;
-            server_id = null;
+            server_id = FixedServer.DEFAULT_ID;
+            setFixedServerId(server_id);
             MainActivity.getMainActivity().cabinetFragment.UpdateServers();
             UpdateServers();
         }
     }
 
     public void UpdateServers() {
-        if (isAuth) {
-            if (server_id == null) {
-                server_background.setColorFilter(Color.parseColor("#FF33AAD9"));
-                server_item_image.setColorFilter(Color.parseColor("#FF33AAD9"));
-                select_layout.setVisibility(View.VISIBLE);
-                serverinfo_layout.setVisibility(View.GONE);
-                server_alert.setVisibility(View.GONE);
-            } else {
-                if (sApi) {
-                    ArrayList<Servers> servers = Lists.slist;
-                    Servers ser = servers.get(server_id);
-                    server_background.setColorFilter(Color.parseColor("#" + ser.getColor()) - 16777216);
-                    server_item_image.setColorFilter(Color.parseColor("#" + ser.getColor()) - 16777216);
-                    select_layout.setVisibility(View.GONE);
-                    serverinfo_layout.setVisibility(View.VISIBLE);
-                    serverinfo_name.setText(ser.getName());
-                    if (MainActivity.nickName == null) {
-                        serverinfo_person_card.setCardBackgroundColor(-1711292128);
-                        serverinfo_person_text.setText("Нажмите \"Играть\" и создайте персонажа");
-                        serverinfo_person_name.setText("");
-                        serverinfo_person_name.setVisibility(View.GONE);
-                    } else {
-                        serverinfo_person_card.setCardBackgroundColor(-1725591005);
-                        serverinfo_person_text.setText("Персонаж: ");
-                        serverinfo_person_name.setText(MainActivity.nickName);
-                        serverinfo_person_name.setVisibility(View.VISIBLE);
-                    }
-                    if (ser.getStatus() == 2) {
-                        server_alert.setVisibility(View.VISIBLE);
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            server_alert.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#" + ser.getColor()) - 16777216));
-                        }
-                    } else {
-                        server_alert.setVisibility(View.GONE);
-                    }
-                }
-            }
-        } else {
+        if (server_id == null) {
+            server_id = FixedServer.DEFAULT_ID;
+        }
+        Servers selectedServer = findServerById(Lists.slist, server_id);
+        if (selectedServer == null) {
             server_background.setColorFilter(Color.parseColor("#FF33AAD9"));
             server_item_image.setColorFilter(Color.parseColor("#FF33AAD9"));
             select_layout.setVisibility(View.VISIBLE);
             serverinfo_layout.setVisibility(View.GONE);
             server_alert.setVisibility(View.GONE);
+            return;
         }
+
+        server_background.setColorFilter(Color.parseColor("#" + selectedServer.getColor()) - 16777216);
+        server_item_image.setColorFilter(Color.parseColor("#" + selectedServer.getColor()) - 16777216);
+        select_layout.setVisibility(View.GONE);
+        serverinfo_layout.setVisibility(View.VISIBLE);
+        serverinfo_name.setText(selectedServer.getName());
+        if (!isAuth) {
+            serverinfo_person_card.setCardBackgroundColor(-1711292128);
+            serverinfo_person_text.setText("Войдите, чтобы играть");
+            serverinfo_person_name.setText("");
+            serverinfo_person_name.setVisibility(View.GONE);
+        } else if (MainActivity.nickName == null) {
+            serverinfo_person_card.setCardBackgroundColor(-1711292128);
+            serverinfo_person_text.setText("Нажмите \"Играть\" и создайте персонажа");
+            serverinfo_person_name.setText("");
+            serverinfo_person_name.setVisibility(View.GONE);
+        } else {
+            serverinfo_person_card.setCardBackgroundColor(-1725591005);
+            serverinfo_person_text.setText("Персонаж: ");
+            serverinfo_person_name.setText(MainActivity.nickName);
+            serverinfo_person_name.setVisibility(View.VISIBLE);
+        }
+        if (selectedServer.getStatus() == 2) {
+            server_alert.setVisibility(View.VISIBLE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                server_alert.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#" + selectedServer.getColor()) - 16777216));
+            }
+        } else {
+            server_alert.setVisibility(View.GONE);
+        }
+    }
+
+    private Servers findServerById(ArrayList<Servers> servers, Integer id) {
+        if (servers == null || id == null) {
+            return null;
+        }
+        for (Servers server : servers) {
+            if (server != null && server.getId() == id) {
+                return server;
+            }
+        }
+        return null;
     }
 
     public class anim1 implements Runnable {

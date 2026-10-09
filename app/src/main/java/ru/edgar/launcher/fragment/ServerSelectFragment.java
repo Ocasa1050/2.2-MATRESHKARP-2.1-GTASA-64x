@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -25,6 +26,8 @@ public class ServerSelectFragment extends MainActivity {
     public ImageView btn_close;
     public TextView serverlist_caption;
     public RecyclerView serverlist_recycler;
+    public LinearLayout emptyState;
+    public TextView retryButton;
 
     ServersAdapter serversAdapter;
     ArrayList<Servers> slist;
@@ -47,15 +50,43 @@ public class ServerSelectFragment extends MainActivity {
         btn_close = (ImageView) viewGroup.findViewById(R.id.btn_close);
         serverlist_caption = (TextView) viewGroup.findViewById(R.id.serverlist_caption);
         serverlist_recycler = (RecyclerView) viewGroup.findViewById(R.id.serverlist_recycler);
+        emptyState = (LinearLayout) viewGroup.findViewById(R.id.serverlist_empty_layout);
+        retryButton = (TextView) viewGroup.findViewById(R.id.serverlist_retry);
         btn_close.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), btn_close));
         btn_close.setOnClickListener(v -> {
             hide();
+        });
+        retryButton.setOnClickListener(v -> {
+            retryButton.setEnabled(false);
+            retryButton.postDelayed(() -> retryButton.setEnabled(true), 2_000L);
+            MainActivity activity = MainActivity.getMainActivity();
+            if (activity != null && activity.splashFragment != null) {
+                activity.splashFragment.loadJsons();
+            } else {
+                retryButton.setEnabled(true);
+            }
         });
         serverlist_recycler.setHasFixedSize(true);
         LinearLayoutManager layoutManagerr = new LinearLayoutManager(MainActivity.getMainActivity());
         serverlist_recycler.setLayoutManager(layoutManagerr);
         //slist = Lists.slist;
         viewGroup.setVisibility(View.GONE);
+    }
+
+    public void refreshServers() {
+        if (serverlist_recycler == null) {
+            return;
+        }
+        if (Lists.slist == null) {
+            Lists.slist = new ArrayList<>();
+        }
+        slist = Lists.slist;
+        boolean isEmpty = slist.isEmpty();
+        serverlist_recycler.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
+        emptyState.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
+        retryButton.setEnabled(true);
+        serversAdapter = new ServersAdapter(MainActivity.getMainActivity(), slist);
+        serverlist_recycler.setAdapter(serversAdapter);
     }
 
     public void show() {
@@ -75,8 +106,7 @@ public class ServerSelectFragment extends MainActivity {
         viewGroup.setAlpha(0.0f);
         viewGroup.setVisibility(View.VISIBLE);
         viewGroup.animate().alpha(1.0f).setDuration(300L).start();
-        serversAdapter = new ServersAdapter(MainActivity.getMainActivity(), Lists.slist);
-        serverlist_recycler.setAdapter(serversAdapter);
+        refreshServers();
     }
 
     public void hide() {
