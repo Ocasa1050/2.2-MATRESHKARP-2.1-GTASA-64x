@@ -179,6 +179,42 @@
             android:scrollbarThumbVertical="@drawable/ic_launcher_scrollbar_thumb"
             android:scrollbarTrackVertical="@drawable/ic_launcher_scrollbar_track"
             android:scrollbars="vertical" />
+
+        <LinearLayout
+            android:id="@+id/serverlist_empty_layout"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/serverlist_empty_message"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/ttnorms_regular"
+                android:gravity="center"
+                android:text="@string/serverlist_empty"
+                android:textColor="#ffffff"
+                android:textSize="@dimen/_12sdp" />
+
+            <TextView
+                android:id="@+id/serverlist_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/_12sdp"
+                android:background="#FF33AAD9"
+                android:clickable="true"
+                android:focusable="true"
+                android:fontFamily="@font/ttnorms_medium"
+                android:paddingStart="@dimen/_18sdp"
+                android:paddingTop="@dimen/_8sdp"
+                android:paddingEnd="@dimen/_18sdp"
+                android:paddingBottom="@dimen/_8sdp"
+                android:text="@string/serverlist_retry"
+                android:textColor="#ffffff"
+                android:textSize="@dimen/_10sdp" />
+        </LinearLayout>
     </FrameLayout>
 
     <androidx.constraintlayout.widget.Guideline
