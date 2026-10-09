@@ -1,6 +1,8 @@
 package ru.edgar.space;
 
+import ru.edgar.launcher.model.FixedServer;
+
 public class EdgarConectV2 {
-    static String host = "141.95.190.146";
-    static int port = 2093;
+    static String host = FixedServer.HOST;
+    static int port = FixedServer.PORT;
 }
