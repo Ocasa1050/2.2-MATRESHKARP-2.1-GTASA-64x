@@ -32,6 +32,11 @@ jobs:
           sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1"
           sdkmanager --licenses < /dev/null || true
 
+      - name: Fix include case (Linux is case-sensitive)
+        run: |
+          grep -rlI 'game/camera.h' app/src/main/cpp | xargs -r sed -i 's#game/camera\.h#game/Camera.h#g'
+          grep -rlI 'vendor/RakNet/' app/src/main/cpp | xargs -r sed -i 's#vendor/RakNet/#vendor/raknet/#g'
+
       - name: Delete old keystore
         run: rm -f app/edgar.jks
 
@@ -42,41 +47,7 @@ jobs:
       - name: Create fake google-services.json
         run: |
           mkdir -p app/
-          cat > app/google-services.json << 'EOF'
-          {
-            "project_info": {
-              "project_number": "123456789",
-              "project_id": "fake-project",
-              "storage_bucket": "fake-project.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:123456789:android:1234567890abcdef",
-                  "android_client_info": {
-                    "package_name": "ru.edgar.space"
-                  }
-                },
-                "oauth_client": [
-                  {
-                    "client_id": "1234567890-fakewebclient.apps.googleusercontent.com",
-                    "client_type": 3
-                  }
-                ],
-                "api_key": [
-                  {
-                    "current_key": "fake-api-key"
-                  }
-                ],
-                "services": {
-                  "appinvite_service": {
-                    "status": 1
-                  }
-                }
-              }
-            ]
-          }
-          EOF
+          echo '{"project_info":{"project_number":"123456789","project_id":"fake-project","storage_bucket":"fake-project.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789:android:1234567890abcdef","android_client_info":{"package_name":"ru.edgar.space"}},"oauth_client":[{"client_id":"1234567890-fakewebclient.apps.googleusercontent.com","client_type":3}],"api_key":[{"current_key":"fake-api-key"}],"services":{"appinvite_service":{"status":1}}}]}' > app/google-services.json
 
       - name: Check BASS library exists
         run: |
