@@ -19,8 +19,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 import ru.edgar.launcher.activity.MainActivity;
-import ru.edgar.launcher.model.Servers;
-import ru.edgar.launcher.other.Lists;
+import ru.edgar.launcher.model.FixedServer;
 import ru.edgar.space.InterfacesManager;
 import ru.edgar.space.R;
 import ru.edgar.space.SAMP;
@@ -58,12 +57,9 @@ public class ChooseServer {
             SAMP.getInstance().getFrontUILayout().addView(viewGroup, -1, -1);
         }
 
-        ArrayList<Servers> list = Lists.slist;
-
-        Servers servers = list.get(MainActivity.server_id);
-        host = servers.getEdgarHost();
-        port = servers.getEdgarPort();
-        Log.e("блять", "вот чему равен порт" + port + "хост = "+ host);
+        host = FixedServer.HOST;
+        port = FixedServer.PORT;
+        Log.i("ChooseServer", "Connecting to " + host + ":" + port);
         lm_status = (TextView) viewGroup.findViewById(R.id.lm_status);
         //
 
@@ -110,8 +106,16 @@ public class ChooseServer {
         }if (i == 4){
             lm_status.setText("Проблемы с сетью, переподключение...");
         }if (i == 1){
-            //NvEventQueueActivity.getInstance().EdgarConnect(host, port);
-            SAMP.getInstance().EdgarConnect2(/*host, port*/false, MainActivity.nickName);
+            SAMP samp = SAMP.getInstance();
+            if (samp == null) {
+                Log.e("ChooseServer", "SAMP is not ready; cannot connect to " + host + ":" + port);
+                return;
+            }
+            try {
+                samp.connn(host, port);
+            } catch (UnsatisfiedLinkError error) {
+                Log.e("ChooseServer", "The client connection method is unavailable", error);
+            }
             //InterfacesManager.getInterfacesManager().getSpawnMenu().ShowSpawnMenu();
         }
     }
