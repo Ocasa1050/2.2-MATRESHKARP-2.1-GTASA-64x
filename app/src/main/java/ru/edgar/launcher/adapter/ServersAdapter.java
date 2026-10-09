@@ -32,7 +32,7 @@ public class ServersAdapter extends RecyclerView.Adapter<ServersAdapter.ServersV
 	
 	public ServersAdapter(Context context, ArrayList<Servers> slist){
 		this.context = context;
-		this.slist = slist;
+		this.slist = slist == null ? new ArrayList<>() : slist;
 	}
 	
 	@NonNull
@@ -45,6 +45,9 @@ public class ServersAdapter extends RecyclerView.Adapter<ServersAdapter.ServersV
     @Override
     public void onBindViewHolder(@NonNull ServersViewHolder holder, int position) {
         Servers servers = slist.get(position);
+        if (servers == null) {
+            return;
+        }
 		((ViewGroup.MarginLayoutParams) holder.view.getLayoutParams()).bottomMargin = MainActivity.getMainActivity().getResources().getDimensionPixelSize(R.dimen._12sdp);
 		if (!servers.getRecommend()) {
 			ConstraintLayout.LayoutParams dVar2 = (ConstraintLayout.LayoutParams) holder.server_item_background.getLayoutParams();
@@ -111,7 +114,7 @@ public class ServersAdapter extends RecyclerView.Adapter<ServersAdapter.ServersV
 				MainActivity.getMainActivity().authFragment.show();
 			} else {
 				HashMap<String, Integer> serverInfo = new HashMap<>();
-				serverInfo.put("server-id", position);
+                serverInfo.put("server-id", servers.getId());
 
 				FirebaseDatabase.getInstance().getReference().child("Users").child("User-server").child(FirebaseAuth.getInstance().getCurrentUser().getUid()).setValue(serverInfo);
 				MainActivity.getMainActivity().serverSelectFragment.hide();
@@ -123,7 +126,7 @@ public class ServersAdapter extends RecyclerView.Adapter<ServersAdapter.ServersV
 
     @Override
     public int getItemCount() {
-        return slist.size();
+        return slist == null ? 0 : slist.size();
     }
 
     public static class ServersViewHolder extends RecyclerView.ViewHolder {
