@@ -230,4 +230,6 @@ Text"</string>
     <string name="on_a_visit">В гостях</string>
     <string name="cohabitation">совместное проживание</string>
     <string name="based_on_the_organization">На базе организации</string>
+    <string name="serverlist_empty">Список серверов пуст</string>
+    <string name="serverlist_retry">Повторить загрузку</string>
 </resources>
