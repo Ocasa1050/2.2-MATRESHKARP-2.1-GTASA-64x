@@ -3,6 +3,7 @@ package ru.edgar.launcher.fragment;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Point;
@@ -40,6 +41,8 @@ import java.io.RandomAccessFile;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -356,7 +359,7 @@ public class MainFragment extends MainActivity {
                     MainActivity.getMainActivity().serverSelectFragment.show();
                 }
             } else {
-                MainActivity.getMainActivity().authFragment.show();
+                beginServerEntry();
             }
         });
 
@@ -372,16 +375,7 @@ public class MainFragment extends MainActivity {
 
     private void beginServerEntry() {
         MainActivity activity = MainActivity.getMainActivity();
-        if (!MainActivity.isAuth) {
-            activity.authFragment.show();
-            return;
-        }
-
-        FirebaseAuth firebaseAuth = FirebaseAuth.getInstance();
-        FirebaseUser user = firebaseAuth.getCurrentUser();
-        if (user == null) {
-            MainActivity.isAuth = false;
-            activity.authFragment.show();
+        if (activity == null) {
             return;
         }
 
@@ -389,6 +383,21 @@ public class MainFragment extends MainActivity {
             MainActivity.server_id = FixedServer.DEFAULT_ID;
         }
         setFixedServerId(MainActivity.server_id);
+
+        FirebaseUser user = null;
+        try {
+            user = FirebaseAuth.getInstance().getCurrentUser();
+        } catch (RuntimeException error) {
+            Log.w("MainFragment", "Firebase sign-in unavailable; using guest mode.", error);
+        }
+        if (user == null) {
+            MainActivity.isAuth = false;
+            activity.loadingFragment.show();
+            startGamePreparation(getOrCreateGuestNickname());
+            return;
+        }
+
+        MainActivity.isAuth = true;
 
         DatabaseReference nicknameReference = FirebaseDatabase.getInstance()
                 .getReference()
@@ -412,20 +421,11 @@ public class MainFragment extends MainActivity {
 
                 String nickname = snapshot.getValue(String.class);
                 if (nickname == null || nickname.trim().isEmpty()) {
-                    activity.loadingFragment.hide();
-                    activity.createCharacterFragment.show();
-                    hide();
+                    startGamePreparation(getOrCreateGuestNickname());
                     return;
                 }
 
-                MainActivity.nickName = nickname;
-                ArrayList<Archive> archives = Lists.archives == null
-                        ? new ArrayList<>()
-                        : new ArrayList<>(Lists.archives);
-                ArrayList<Deleted> deletedFiles = Lists.deleted == null
-                        ? new ArrayList<>()
-                        : new ArrayList<>(Lists.deleted);
-                gamePreparationExecutor.execute(() -> prepareGameFilesAndLaunch(archives, deletedFiles));
+                startGamePreparation(nickname);
             }
 
             @Override
@@ -435,9 +435,8 @@ public class MainFragment extends MainActivity {
                 }
                 requestPending[0] = false;
                 playRequestHandler.removeCallbacks(timeout[0]);
-                activity.loadingFragment.hide();
-                Toast.makeText(activity, "Не удалось загрузить персонажа. Проверьте подключение.", Toast.LENGTH_LONG).show();
                 Log.w("MainFragment", "Nickname lookup failed", error.toException());
+                startGamePreparation(getOrCreateGuestNickname());
             }
         };
 
@@ -447,11 +446,41 @@ public class MainFragment extends MainActivity {
             }
             requestPending[0] = false;
             nicknameReference.removeEventListener(nicknameListener);
-            activity.loadingFragment.hide();
-            Toast.makeText(activity, "Сервер не ответил. Попробуйте ещё раз.", Toast.LENGTH_LONG).show();
+            Log.w("MainFragment", "Nickname lookup timed out; continuing as guest.");
+            startGamePreparation(getOrCreateGuestNickname());
         };
         playRequestHandler.postDelayed(timeout[0], 15_000L);
         nicknameReference.addListenerForSingleValueEvent(nicknameListener);
+    }
+
+    private String getOrCreateGuestNickname() {
+        SharedPreferences preferences = MainActivity.getMainActivity()
+                .getSharedPreferences("guest_profile", Context.MODE_PRIVATE);
+        String nickname = preferences.getString("nickname", null);
+        if (nickname == null || !nickname.matches("(?i)Guest_[a-f0-9]{6}")) {
+            String suffix = UUID.randomUUID().toString().replace("-", "")
+                    .substring(0, 6).toUpperCase(Locale.US);
+            nickname = "Guest_" + suffix;
+            preferences.edit().putString("nickname", nickname).apply();
+        }
+        return nickname;
+    }
+
+    private void startGamePreparation(String nickname) {
+        MainActivity.nickName = nickname == null || nickname.trim().isEmpty()
+                ? getOrCreateGuestNickname()
+                : nickname.trim();
+        if (serverinfo_layout != null) {
+            UpdateServers();
+        }
+
+        ArrayList<Archive> archives = Lists.archives == null
+                ? new ArrayList<>()
+                : new ArrayList<>(Lists.archives);
+        ArrayList<Deleted> deletedFiles = Lists.deleted == null
+                ? new ArrayList<>()
+                : new ArrayList<>(Lists.deleted);
+        gamePreparationExecutor.execute(() -> prepareGameFilesAndLaunch(archives, deletedFiles));
     }
 
     private void prepareGameFilesAndLaunch(ArrayList<Archive> archives, ArrayList<Deleted> deletedFiles) {
@@ -888,7 +917,7 @@ public class MainFragment extends MainActivity {
                 MainActivity.isAuth = false;
                 server_id = FixedServer.DEFAULT_ID;
                 setFixedServerId(server_id);
-                nickName = null;
+                MainActivity.nickName = getOrCreateGuestNickname();
                 UpdateServers();
                 return;
             }
@@ -931,7 +960,7 @@ public class MainFragment extends MainActivity {
                 }
             });
         } else {
-            nickName = null;
+            MainActivity.nickName = getOrCreateGuestNickname();
             server_id = FixedServer.DEFAULT_ID;
             setFixedServerId(server_id);
             MainActivity.getMainActivity().cabinetFragment.UpdateServers();
@@ -958,11 +987,11 @@ public class MainFragment extends MainActivity {
         select_layout.setVisibility(View.GONE);
         serverinfo_layout.setVisibility(View.VISIBLE);
         serverinfo_name.setText(selectedServer.getName());
-        if (!isAuth) {
+        if (!MainActivity.isAuth) {
             serverinfo_person_card.setCardBackgroundColor(-1711292128);
-            serverinfo_person_text.setText("Войдите, чтобы играть");
-            serverinfo_person_name.setText("");
-            serverinfo_person_name.setVisibility(View.GONE);
+            serverinfo_person_text.setText("Гостевой режим");
+            serverinfo_person_name.setText(MainActivity.nickName == null ? "" : MainActivity.nickName);
+            serverinfo_person_name.setVisibility(MainActivity.nickName == null ? View.GONE : View.VISIBLE);
         } else if (MainActivity.nickName == null) {
             serverinfo_person_card.setCardBackgroundColor(-1711292128);
             serverinfo_person_text.setText("Нажмите \"Играть\" и создайте персонажа");

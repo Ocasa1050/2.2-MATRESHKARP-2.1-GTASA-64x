@@ -554,7 +554,6 @@ public abstract class NvEventQueueActivity extends AppCompatActivity implements 
 //            quitAndWait();
 //            finish();
 //        }
-        finishAndRemoveTask();
         super.onDestroy();
         systemCleanup();
         //systemCleanup();

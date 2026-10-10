@@ -112,7 +112,11 @@ public class ChooseServer {
                 return;
             }
             try {
-                samp.connn(host, port);
+                String nickname = MainActivity.nickName;
+                if (nickname == null || nickname.trim().isEmpty()) {
+                    nickname = "Guest";
+                }
+                samp.connn(host, port, nickname);
             } catch (UnsatisfiedLinkError error) {
                 Log.e("ChooseServer", "The client connection method is unavailable", error);
             }

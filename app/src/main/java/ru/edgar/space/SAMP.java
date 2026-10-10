@@ -20,6 +20,7 @@ import com.joom.paranoid.Obfuscate;
 import com.nvidia.devtech.HeightProvider;
 import com.nvidia.devtech.InputManager;
 
+import ru.edgar.launcher.activity.MainActivity;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
@@ -466,9 +467,13 @@ public class SAMP extends GTASA implements HeightProvider.HeightListener {
 
     public void RadarBR() {/* runOnUiThread(() -> { setNativeHudElementPosition(6, 5, 5); });*/ }
 
-    public native void connn(String host, int port);
+    public native void connn(String host, int port, String nickname);
 
     public void connectEdgar() {
-        connn(EdgarConectV2.host, EdgarConectV2.port);
+        String nickname = MainActivity.nickName;
+        if (nickname == null || nickname.trim().isEmpty()) {
+            nickname = "Guest";
+        }
+        connn(EdgarConectV2.host, EdgarConectV2.port, nickname);
     }
 }

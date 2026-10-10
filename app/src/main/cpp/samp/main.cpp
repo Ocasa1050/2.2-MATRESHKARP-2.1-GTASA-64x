@@ -1,6 +1,7 @@
 ﻿#include <jni.h>
 #include <pthread.h>
 #include <syscall.h>
+#include <cstring>
 
 #include "main.h"
 #include "game/game.h"
@@ -292,9 +293,29 @@ extern "C" {
 		pJavaWrapper = new CJavaWrapper(pEnv, thiz);
         //pJavaWrapper->ShowHud();
 	}
-    JNIEXPORT void JNICALL Java_ru_edgar_space_SAMP_connn(JNIEnv *pEnv, jobject thiz, jstring host, jint port)
+    JNIEXPORT void JNICALL Java_ru_edgar_space_SAMP_connn(JNIEnv *pEnv, jobject thiz, jstring host, jint port, jstring nickname)
     {
+        if (pSettings == nullptr || host == nullptr || nickname == nullptr) {
+            FLog("Cannot connect: settings, host, or nickname is missing.");
+            return;
+        }
+
         const char *host_char = pEnv->GetStringUTFChars(host, 0);
+        const char *nickname_char = pEnv->GetStringUTFChars(nickname, 0);
+        if (host_char == nullptr || nickname_char == nullptr) {
+            if (host_char != nullptr) {
+                pEnv->ReleaseStringUTFChars(host, host_char);
+            }
+            if (nickname_char != nullptr) {
+                pEnv->ReleaseStringUTFChars(nickname, nickname_char);
+            }
+            FLog("Cannot connect: failed to read host or nickname.");
+            return;
+        }
+
+        std::strncpy(pSettings->Get().szNickName, nickname_char,
+                     sizeof(pSettings->Get().szNickName) - 1);
+        pSettings->Get().szNickName[sizeof(pSettings->Get().szNickName) - 1] = '\0';
         pNetGame = new CNetGame(
                 host_char,
                 port,
@@ -302,6 +323,7 @@ extern "C" {
                 pSettings->GetReadOnly().szPassword);
 
         pEnv->ReleaseStringUTFChars(host, host_char);
+        pEnv->ReleaseStringUTFChars(nickname, nickname_char);
     }
 	JNIEXPORT void JNICALL Java_ru_edgar_space_SAMP_onInputEnd(JNIEnv *pEnv, jobject thiz, jbyteArray str)
 	{
