@@ -256,6 +256,30 @@
                         app:autoSizeMinTextSize="@dimen/_3sdp"
                         app:autoSizeTextType="uniform" />
                 </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/btn_share_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/_42sdp"
+                    android:layout_marginBottom="@dimen/_16sdp"
+                    android:background="@drawable/auth_bg_button">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:layout_marginStart="@dimen/_12sdp"
+                        android:layout_marginEnd="@dimen/_12sdp"
+                        android:fontFamily="@font/ttnorms_medium"
+                        android:gravity="center"
+                        android:maxLines="1"
+                        android:text="Отправить файл журнала"
+                        android:textColor="#ffffff"
+                        android:textSize="@dimen/_12sdp"
+                        app:autoSizeMaxTextSize="@dimen/_12sdp"
+                        app:autoSizeMinTextSize="@dimen/_3sdp"
+                        app:autoSizeTextType="uniform" />
+                </FrameLayout>
             </LinearLayout>
         </ScrollView>
 

@@ -1551,6 +1551,7 @@ void NvUtilInit_hook()
     NvUtilInit();
 
     g_pszStorage = (char*)(g_libGTASA + (VER_x32 ? 0x6D687C : 0x8B46A8)); // StorageRootBuffer
+    FLog("Native diagnostic log initialized");
 
     ReadSettingFile();
 

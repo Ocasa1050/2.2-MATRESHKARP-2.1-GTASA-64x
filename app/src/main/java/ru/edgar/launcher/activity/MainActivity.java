@@ -101,6 +101,7 @@ import ru.edgar.launcher.model.Api;
 import ru.edgar.launcher.model.edgar;
 import ru.edgar.launcher.other.Interface;
 import ru.edgar.space.R;
+import ru.edgar.space.diagnostics.CrashLogManager;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -145,6 +146,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setTheme(R.style.AppTheme_Launcher);
         setContentView(R.layout.activity_main);
+        CrashLogManager.initialize(this);
+        CrashLogManager.recordEvent(this, "launcher.onCreate");
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
 
         getExternalFilesDir("");

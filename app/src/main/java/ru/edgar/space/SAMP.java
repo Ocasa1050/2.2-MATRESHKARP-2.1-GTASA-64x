@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 
 import ru.edgar.space.core.ui.noty.Notification;
 import ru.edgar.space.core.ui.settingsdialog.DialogClientSettings;
+import ru.edgar.space.diagnostics.CrashLogManager;
 
 @Obfuscate
 public class SAMP extends GTASA implements HeightProvider.HeightListener {
@@ -184,8 +185,10 @@ public class SAMP extends GTASA implements HeightProvider.HeightListener {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        CrashLogManager.recordEvent(this, "game_activity.onCreate.begin");
         Log.i(TAG, "**** onCreate");
         super.onCreate(savedInstanceState);
+        CrashLogManager.recordEvent(this, "game_activity.onCreate.after_super");
 
         instance = this;
 
@@ -241,10 +244,13 @@ public class SAMP extends GTASA implements HeightProvider.HeightListener {
 
         DoResumeEvent();
 
+        CrashLogManager.recordEvent(this, "native.initializeSAMP.begin");
         try {
             initializeSAMP();
+            CrashLogManager.recordEvent(this, "native.initializeSAMP.returned");
         } catch (UnsatisfiedLinkError e5) {
-            Log.e(TAG, e5.getMessage());
+            CrashLogManager.recordEvent(this, "native.initializeSAMP.failed: " + e5);
+            Log.e(TAG, "Native SAMP initialization failed", e5);
         }
 
     }
@@ -302,6 +308,7 @@ public class SAMP extends GTASA implements HeightProvider.HeightListener {
 
     @Override
     public void onDestroy() {
+        CrashLogManager.endGameSession(this);
         Log.i(TAG, "**** onDestroy");
         super.onDestroy();
     }

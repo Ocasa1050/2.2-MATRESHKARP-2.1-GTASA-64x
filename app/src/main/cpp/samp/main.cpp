@@ -1,7 +1,8 @@
-﻿#include <jni.h>
+#include <jni.h>
 #include <pthread.h>
 #include <syscall.h>
 #include <cstring>
+#include <time.h>
 
 #include "main.h"
 #include "game/game.h"
@@ -481,33 +482,37 @@ uint32_t GetTickCount()
 
 void FLog(const char* fmt, ...)
 {
-	char buffer[0xFF];
-	static FILE* flLog = nullptr;
-	const char* pszStorage = g_pszStorage;
+    char message[1024] = {0};
+    char line[1200] = {0};
+    static FILE* flLog = nullptr;
+    const char* pszStorage = g_pszStorage;
 
+    va_list arg;
+    va_start(arg, fmt);
+    vsnprintf(message, sizeof(message), fmt, arg);
+    va_end(arg);
 
-	if (flLog == nullptr && pszStorage != nullptr)
-	{
-		//sprintf(buffer, "%s/samp_log.txt", pszStorage);
-        //LOGI("buffer: %s", buffer);
-		flLog = fopen(buffer, "a");
-	}
+    if (flLog == nullptr && pszStorage != nullptr)
+    {
+        char logPath[1024] = {0};
+        const int pathLength = snprintf(logPath, sizeof(logPath), "%s/samp_log.txt", pszStorage);
+        if (pathLength > 0 && pathLength < (int)sizeof(logPath))
+            flLog = fopen(logPath, "a");
+    }
 
-	memset(buffer, 0, sizeof(buffer));
+    time_t now = time(nullptr);
+    struct tm localTime = {};
+    localtime_r(&now, &localTime);
+    char timestamp[32] = {0};
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &localTime);
+    snprintf(line, sizeof(line), "[%s] [native] %s", timestamp, message);
 
-	va_list arg;
-	va_start(arg, fmt);
-	vsnprintf(buffer, sizeof(buffer), fmt, arg);
-	va_end(arg);
+    LOGI("%s", line);
+    firebase::crashlytics::Log(line);
 
-	LOGI("%s", buffer);
-	firebase::crashlytics::Log(buffer);
-
-	if (flLog == nullptr) return;
-	fprintf(flLog, "%s\n", buffer);
-	fflush(flLog);
-
-	return;
+    if (flLog == nullptr) return;
+    fprintf(flLog, "%s\n", line);
+    fflush(flLog);
 }
 
 void ChatLog(const char* fmt, ...)
