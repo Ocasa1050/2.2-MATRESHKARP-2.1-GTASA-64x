@@ -33,6 +33,7 @@ import ru.edgar.launcher.model.Deleted;
 import ru.edgar.launcher.other.Lists;
 import ru.edgar.launcher.other.Utils;
 import ru.edgar.space.R;
+import ru.edgar.space.diagnostics.CrashLogManager;
 
 public class SettingsFragment extends MainActivity {
 
@@ -47,6 +48,7 @@ public class SettingsFragment extends MainActivity {
     public FrameLayout btn_reinstall_data;
     public FrameLayout btn_reinstall_data_dev;
     public FrameLayout btn_changepass;
+    public FrameLayout btn_share_log;
     public TextView faq_text;
     public ConstraintLayout footer_layout;
     public FrameLayout btn_logout;
@@ -79,9 +81,12 @@ public class SettingsFragment extends MainActivity {
         btn_reinstall_data = (FrameLayout) viewGroup.findViewById(R.id.btn_reinstall_data);
         btn_reinstall_data_dev = (FrameLayout) viewGroup.findViewById(R.id.btn_reinstall_data_dev);
         btn_changepass = (FrameLayout) viewGroup.findViewById(R.id.btn_changepass);
+        btn_share_log = (FrameLayout) viewGroup.findViewById(R.id.btn_share_log);
         faq_text = (TextView) viewGroup.findViewById(R.id.faq_text);
         footer_layout = (ConstraintLayout) viewGroup.findViewById(R.id.footer_layout);
         btn_logout = (FrameLayout) viewGroup.findViewById(R.id.btn_logout);
+        btn_share_log.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), btn_share_log));
+        btn_share_log.setOnClickListener(view -> CrashLogManager.shareLog(MainActivity.getMainActivity()));
         btn_close.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), btn_close));
         btn_close.setOnClickListener(view -> { hide(); });
         SpannableString spannableString = new SpannableString("Проблемы? Мы можем вам помочь!");

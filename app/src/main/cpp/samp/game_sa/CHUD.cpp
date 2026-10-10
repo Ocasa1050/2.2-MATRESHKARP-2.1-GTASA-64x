@@ -120,9 +120,5 @@ extern "C"
 
 void CHUD::Render()
 {
-    if(CHUD::IsEnabled())
-    {
-        FLog("CHUD: Render");
-
-    } else FLog("CHUD: NoRender");
+    // Do not log from this per-frame render hook; it can overwhelm the diagnostic file.
 }

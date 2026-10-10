@@ -66,6 +66,7 @@ import ru.edgar.launcher.network.ApiClient;
 import ru.edgar.launcher.other.Utils;
 import ru.edgar.space.R;
 import ru.edgar.space.SAMP;
+import ru.edgar.space.diagnostics.CrashLogManager;
 
 public class MainFragment extends MainActivity {
 
@@ -219,6 +220,7 @@ public class MainFragment extends MainActivity {
         }
         MainActivity.isAuth = false;
         MainActivity.nickName = getOrCreateGuestNickname();
+        CrashLogManager.beginGameSession(activity);
         activity.startActivity(new Intent(activity, SAMP.class));
     }
 
