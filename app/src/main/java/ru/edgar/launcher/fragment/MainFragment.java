@@ -188,17 +188,6 @@ public class MainFragment extends MainActivity {
 
         btn_social_youtube.setOnClickListener(view -> {
             MainActivity.getMainActivity().startActivity(new Intent("android.intent.action.VIEW", Uri.parse("https://www.youtube.com/@EDGAR3.0")));
-            /*String url = "jdbc:mysql://164.132.206.179:3306/gs242777";
-            String username = "gs242777";
-            String password = "jMkeYrkkUDw8";
-
-            System.out.println("Connecting database ...");
-
-            try (Connection connection = DriverManager.getConnection(url, username, password)) {
-                System.out.println("Database connected!");
-            } catch (SQLException e) {
-                throw new IllegalStateException("Cannot connect the database!", e);
-            }*/
         });
 
         btn_social_telegram.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), btn_social_telegram));
@@ -209,161 +198,7 @@ public class MainFragment extends MainActivity {
 
         btn_play.setOnTouchListener(new animClickBtn(MainActivity.getMainActivity(), btn_play));
 
-        btn_play.setOnClickListener(view -> {
-            if(isAuth) {
-                if (server_id != null) {
-                    FirebaseDatabase.getInstance().getReference().child("Users").child("User-servers").child("Server_" + MainActivity.server_id).child(FirebaseAuth.getInstance().getUid()).child("nick").addValueEventListener(new ValueEventListener() {
-                        @Override
-                        public void onDataChange(@NonNull DataSnapshot snapshot) {
-                            Log.e("edgar", "pon" + snapshot.getValue(String.class));
-                            if (snapshot.getValue(String.class) == null) {
-                                MainActivity.getMainActivity().createCharacterFragment.show();
-                                hide();
-                            } else {
-                                MainActivity.nickName = snapshot.getValue(String.class);
-                                //MainActivity.getMainActivity().startActivity(new Intent(MainActivity.getMainActivity(), SAMP.class));
-                                MainActivity.getMainActivity().loadingFragment.show();
-
-                                List<Archive> archiveList = Lists.archives;
-                                List<Deleted> deletedList = Lists.deleted;
-
-                                List<String> path = new ArrayList<>();
-                                List<String> unZip = new ArrayList<>();
-                                List<String> toUnZip = new ArrayList<>();
-                                List<String> url = new ArrayList<>();
-                                long si = 0;
-
-                                for (int i = 0; deletedList.size() > i; i++) {
-                                    Deleted deleted = deletedList.get(i);
-                                    File f = new File(deleted.getPath());
-                                    if (f.exists()) {
-                                        if (f.isDirectory()) {
-                                            deleteDirectory(f);
-                                        } else if (f.isFile()) {
-                                            f.delete();
-                                        }
-                                    }
-                                }
-
-                                for (int i = 0; archiveList.size() > i; i++) {
-                                    Archive archive = archiveList.get(i);
-                                    long size = 0;
-                                    for (int i1 = 0; archive.getPaths().size() > i1; i1++) {
-                                        ArchivePath archivePaths = archive.getPaths().get(i1);
-                                        size = size + getFileOrDirectorySize(archivePaths.getPath());
-                                    }
-                                    System.out.println(size + " вес локал");
-                                    if (archive.getSize() == size) {
-                                        System.out.println(archive.getSize() + " == " + size);
-                                        System.out.println("Все ровно");
-                                    } else {
-                                        for (int i1 = 0; archive.getPaths().size() > i1; i1++) {
-                                            ArchivePath archivePaths = archive.getPaths().get(i1);
-                                            path.add(archivePaths.getPath());
-                                        }
-                                        toUnZip.add(archive.getZip_path());
-                                        unZip.add(archive.getType());
-                                        url.add(archive.getUrls());
-                                        si = si + archive.getSize();
-                                        System.out.println(si);
-                                    }
-                                }
-
-                                if (url.size() != 0) {
-                                    MainActivity.getMainActivity().loadingFragment.hide();
-                                    MainActivity.getMainActivity().dialogFragment.show(R.drawable.ic_launcher_question, "Доступно обновление!\nЗагрузить " + Utils.bytesIntoHumanReadable(si) + "?", "Да", "Нет", new DownloadStart(url, path, unZip, toUnZip), new DialogFragment.closeDialog());
-                                } else {
-                                    MainActivity.getMainActivity().loadingFragment.hide();
-                                    MainActivity.getMainActivity().startActivity(new Intent(MainActivity.getMainActivity(), SAMP.class));
-                                }
-
-
-                                //TODO тут проверка на кеш!!!!!!!!! и переход в download fragment
-                                /*Retrofit retrofit = new Retrofit.Builder()
-                                        .baseUrl("http://api-free.edgars.site/")
-                                        .addConverterFactory(GsonConverterFactory.create())
-                                        .build();
-
-                                MainActivity.getMainActivity().loadingFragment.show();
-
-                                Interface sInterface = retrofit.create(Interface.class);
-
-                                System.out.println(Lists.filesListUrl);
-
-                                Call<List<FilesList>> call = sInterface.getFilesList(Lists.filesListUrl);
-
-                                call.enqueue(new Callback<List<FilesList>>() {
-                                    @SuppressLint("NewApi")
-                                    @Override
-                                    public void onResponse(Call<List<FilesList>> call, Response<List<FilesList>> response) {
-
-                                        List<FilesList> filesLists = response.body();
-
-                                        for (FilesList filesList : filesLists) {
-                                            filesListArrayList.add(new FilesList(filesList.getName(), filesList.getSize(), filesList.getHash(), filesList.getPath(), filesList.getUrl()));
-                                            size += Integer.parseInt(filesList.getSize());
-                                            System.out.println(size);
-                                        }
-                                        File directory = new File(Environment.getExternalStorageDirectory() + "/Test_Test");
-                                        System.out.println("ponnnnn listFilesRecursively");
-                                        List<FilesList> fileInfoList = listFilesRecursively(directory);
-                                        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-                                        String json = gson.toJson(fileInfoList);
-                                        System.out.println(json);
-                                        File file = new File(Environment.getExternalStorageDirectory() + "/spacb/file.txt");
-
-                                        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-                                        String json = gson.toJson(fileInfoList);
-                                        System.out.println(json);
-                                        try {
-                                            FileWriter writer = new FileWriter(file);
-
-                                            writer.write(json);
-
-                                            writer.flush();
-                                            writer.close();
-                                        } catch (IOException e) {
-                                            e.printStackTrace();
-                                        }
-                                        if (fileInfoList.size() == 0) {
-                                            url.clear();
-                                            paths.clear();
-                                            new File(Environment.getExternalStorageDirectory() + "/Edgar").delete();
-                                            for (FilesList info : filesListArrayList) {
-                                                url.add(info.getUrl());
-                                                paths.add(info.getPath());
-                                            }
-                                            MainActivity.getMainActivity().loadingFragment.hide();
-                                            MainActivity.getMainActivity().dialogFragment.show(R.drawable.ic_launcher_question, "Доступно обновление!\nЗагрузить " + Utils.bytesIntoHumanReadable(size) + "?", "Да", "Нет", new DownloadStart(), new DialogFragment.closeDialog());
-                                        } else {
-                                            System.out.println("ponnnnn fileInfoList");
-                                            compareFiles(filesListArrayList, fileInfoList);
-                                        }
-                                    }
-
-                                    @Override
-                                    public void onFailure(Call<List<FilesList>> call, Throwable t) {
-                                        System.out.println("Xynia");
-                                    }
-                                });*/
-                            }
-                        }
-
-                        @Override
-                        public void onCancelled(@NonNull DatabaseError error) {
-                            System.out.println("Xynia");
-                        }
-                    });
-
-                } else {
-                    MainActivity.getMainActivity().serverSelectFragment.show();
-                }
-            } else {
-                beginServerEntry();
-            }
-        });
-
-        // Use the non-blocking fixed-server launch path instead of the legacy callback chain above.
+        // Play button: go straight into the game (no Firebase, no file check).
         btn_play.setOnClickListener(view -> beginServerEntry());
 
         select_server_layout.setOnClickListener(null);
@@ -373,84 +208,18 @@ public class MainFragment extends MainActivity {
         viewGroup.setVisibility(View.GONE);
     }
 
+    // Direct launch: skips Firebase and the game-file check and enters the fixed server immediately.
     private void beginServerEntry() {
         MainActivity activity = MainActivity.getMainActivity();
         if (activity == null) {
             return;
         }
-
         if (MainActivity.server_id == null) {
             MainActivity.server_id = FixedServer.DEFAULT_ID;
         }
-        setFixedServerId(MainActivity.server_id);
-
-        FirebaseUser user = null;
-        try {
-            user = FirebaseAuth.getInstance().getCurrentUser();
-        } catch (RuntimeException error) {
-            Log.w("MainFragment", "Firebase sign-in unavailable; using guest mode.", error);
-        }
-        if (user == null) {
-            MainActivity.isAuth = false;
-            activity.loadingFragment.show();
-            startGamePreparation(getOrCreateGuestNickname());
-            return;
-        }
-
-        MainActivity.isAuth = true;
-
-        DatabaseReference nicknameReference = FirebaseDatabase.getInstance()
-                .getReference()
-                .child("Users")
-                .child("User-servers")
-                .child("Server_" + MainActivity.server_id)
-                .child(user.getUid())
-                .child("nick");
-
-        activity.loadingFragment.show();
-        final boolean[] requestPending = {true};
-        final Runnable[] timeout = new Runnable[1];
-        ValueEventListener nicknameListener = new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot snapshot) {
-                if (!requestPending[0]) {
-                    return;
-                }
-                requestPending[0] = false;
-                playRequestHandler.removeCallbacks(timeout[0]);
-
-                String nickname = snapshot.getValue(String.class);
-                if (nickname == null || nickname.trim().isEmpty()) {
-                    startGamePreparation(getOrCreateGuestNickname());
-                    return;
-                }
-
-                startGamePreparation(nickname);
-            }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-                if (!requestPending[0]) {
-                    return;
-                }
-                requestPending[0] = false;
-                playRequestHandler.removeCallbacks(timeout[0]);
-                Log.w("MainFragment", "Nickname lookup failed", error.toException());
-                startGamePreparation(getOrCreateGuestNickname());
-            }
-        };
-
-        timeout[0] = () -> {
-            if (!requestPending[0]) {
-                return;
-            }
-            requestPending[0] = false;
-            nicknameReference.removeEventListener(nicknameListener);
-            Log.w("MainFragment", "Nickname lookup timed out; continuing as guest.");
-            startGamePreparation(getOrCreateGuestNickname());
-        };
-        playRequestHandler.postDelayed(timeout[0], 15_000L);
-        nicknameReference.addListenerForSingleValueEvent(nicknameListener);
+        MainActivity.isAuth = false;
+        MainActivity.nickName = getOrCreateGuestNickname();
+        activity.startActivity(new Intent(activity, SAMP.class));
     }
 
     private String getOrCreateGuestNickname() {
@@ -708,7 +477,6 @@ public class MainFragment extends MainActivity {
                 FilesList localFiles = secondList.get(i);
                 FilesList info = firstList.get(i);
 
-                // Эдгар соска я бы его .... Дальше сам додумай by EDGAR 3.0
                 System.out.println("инфо path + " + info.getPath());
                 System.out.println("localFiles.getPath() + " + localFiles.getPath());
                 if (info.getPath().equals(localFiles.getPath())) {
@@ -731,11 +499,9 @@ public class MainFragment extends MainActivity {
             }
             if (!isTo) {
                 MainActivity.getMainActivity().loadingFragment.hide();
-                //MainActivity.getMainActivity().dialogFragment.show(R.drawable.ic_launcher_question, "Доступно обновление!\nЗагрузить " + Utils.bytesIntoHumanReadable(size) + "?", "Да", "Нет", new DownloadStart(), new DialogFragment.closeDialog());
             } else {
                 MainActivity.getMainActivity().loadingFragment.hide();
                 System.out.println("ПРОШЛОт ке");
-                //MainActivity.getMainActivity().startActivity(new Intent(MainActivity.getMainActivity(), GTASA.class));
             }
         }
     }
@@ -764,7 +530,6 @@ public class MainFragment extends MainActivity {
                             int bytesRead;
                             while ((bytesRead = raf.read(buffer)) != -1) {
                                 // Ваши операции обработки данных
-                                // Например, можно обрабатывать содержимое файла по частям
                             }
                             String hash = calculateHash(buffer);  // Вычисление хэша из буфера
                             String resultString = file.getPath().replace("/storage/emulated/0/Test_Test", "");
@@ -792,7 +557,6 @@ public class MainFragment extends MainActivity {
             }
             String hashString = sb.toString();
 
-            //System.out.println("MD5 хэш для данных: " + hashString);
             return hashString;
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -810,13 +574,9 @@ public class MainFragment extends MainActivity {
         story_layout.clearAnimation();
         story_layout.setAlpha(0.0f);
         mHandler.postDelayed(new anim1(), 150L);
-       /* story_layout.setTranslationY(-f10.y); // newLauncher делал эдгар / EDGAR 3.0
-        story_layout.animate().setDuration(300L).translationY(0.0f).alpha(1.0f).start();*/
         server_layout.clearAnimation();
         server_layout.setAlpha(0.0f);
         mHandler.postDelayed(new anim2(), 300L);
-        /*server_layout.setTranslationY(-f10.y);
-        server_layout.animate().setDuration(450L).translationY(0.0f).alpha(1.0f).start();*/
         social_layout.clearAnimation();
         social_layout.setAlpha(0.0f);
         social_layout.setTranslationY(f10.y);
