@@ -48,16 +48,32 @@ void CColModel::RemoveCollisionVolumes() {
 
 // 0x40F7C0
 CColModel& CColModel::operator=(const CColModel& colModel) {
-    assert(&colModel != this); // BUG(Prone) No self assignment check
+    if (&colModel == this) {
+        return *this;
+    }
 
     m_boundSphere = colModel.m_boundSphere;
     m_boundBox    = colModel.m_boundBox;
+    m_bHasCollisionVolumes = colModel.m_bHasCollisionVolumes;
+
+    if (m_pColData == colModel.m_pColData) {
+        return *this;
+    }
+
+    if (!colModel.m_pColData) {
+        if (m_pColData) {
+            RemoveCollisionVolumes();
+        }
+        m_bIsSingleColDataAlloc = false;
+        return *this;
+    }
 
     if (m_pColData) {
-        m_pColData->Copy(*colModel.m_pColData);
-    } else {
-        exit(0); // ???? What now? We don't copy the stuff ????
+        RemoveCollisionVolumes();
     }
+    m_bIsSingleColDataAlloc = false;
+    m_pColData = new CCollisionData();
+    m_pColData->Copy(*colModel.m_pColData);
 
     return *this;
 }
