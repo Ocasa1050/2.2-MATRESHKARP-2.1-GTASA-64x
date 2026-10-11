@@ -510,6 +510,7 @@ void CNetGame::ProcessConnecting()
 	{
 		//if (pUI) pUI->chat()->addDebugMessage("Connecting to %s:%d...", m_szHostOrIp, m_iPort);
 		if (pUI) pUI->chat()->addDebugMessage("Connecting to Server...");
+        FLog("RakNet connection attempt to %s:%d", m_szHostOrIp, m_iPort);
 
 		m_pRakClient->Connect(m_szHostOrIp, m_iPort, 0, 0, 2);
 		

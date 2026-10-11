@@ -576,6 +576,7 @@ JNIEXPORT void JNICALL Java_com_nvidia_devtech_NvEventQueueActivity_setNativeHpA
 
 JNIEXPORT void JNICALL Java_ru_edgar_space_core_ui_spawnmenu_SpawnMenu_spawm(JNIEnv* pEnv, jobject thiz, jint idspawn)
 {
+    FLog("Spawn location auto-selected; sending /spawn32");
     Chat::keyboardEvent("/spawn32");
 
 }

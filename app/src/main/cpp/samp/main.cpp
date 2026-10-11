@@ -123,6 +123,15 @@ struct sigaction act3_old;
 
 extern int g_iLastProcessedSkinCollision, g_iLastProcessedEntityCollision, g_iLastRenderedObject;
 extern uintptr_t g_dwLastRetAddrCrash;
+extern char lastFile[512];
+extern char lastResolvedFile[512];
+
+static void LogLastAssetContext()
+{
+    FLog("Last requested game data file: %s", lastFile[0] ? lastFile : "(none)");
+    FLog("Last resolved game data path: %s", lastResolvedFile[0] ? lastResolvedFile : "(none)");
+}
+
 void handler(int signum, siginfo_t *info, void* contextPtr)
 {
 	ucontext* context = (ucontext_t*)contextPtr;
@@ -135,6 +144,7 @@ void handler(int signum, siginfo_t *info, void* contextPtr)
 	if(info->si_signo == SIGSEGV)
 	{
 		FLog("SIGSEGV | Fault address: 0x%x", info->si_addr);
+        LogLastAssetContext();
 
 		PRINT_CRASH_STATES(context);
 
@@ -156,6 +166,7 @@ void handler1(int signum, siginfo_t *info, void* contextPtr)
 	if(info->si_signo == SIGABRT)
 	{
 		FLog("SIGABRT | Fault address: 0x%x", info->si_addr);
+        LogLastAssetContext();
 
 		PRINT_CRASH_STATES(context);
 
@@ -177,6 +188,7 @@ void handler2(int signum, siginfo_t *info, void* contextPtr)
 	if(info->si_signo == SIGFPE)
 	{
 		FLog("SIGFPE | Fault address: 0x%x", info->si_addr);
+        LogLastAssetContext();
 
 		PRINT_CRASH_STATES(context);
 
@@ -198,6 +210,7 @@ void handler3(int signum, siginfo_t *info, void* contextPtr)
 	if(info->si_signo == SIGBUS)
 	{
 		FLog("SIGBUS | Fault address: 0x%x", info->si_addr);
+        LogLastAssetContext();
 
 		PRINT_CRASH_STATES(context);
 
@@ -224,7 +237,9 @@ void DoInitStuff()
 		pUI->chat()->setVisible(true);
 		pUI->buttonpanel()->setVisible(true);
 
+        FLog("Beginning GTA game and scene initialization");
 		pGame->Initialize();
+        FLog("GTA game and scene initialization completed");
 		pGame->SetMaxStats();
 		pGame->ToggleThePassingOfTime(false);
 
@@ -263,13 +278,15 @@ void DoInitStuff()
 
         if (!env)
         {
-            FLog("No env");
+            FLog("Java environment unavailable before server connection callback");
             return;
         }
+
+        FLog("Java environment ready; dispatching configured server connection callback");
         env->CallVoidMethod(pJavaWrapper->activity, pJavaWrapper->s_connectedgar);
 
         bNetworkInited = true;
-        FLog("No env");
+        FLog("Configured server connection callback returned");
         //pJavaWrapper->ShowHud();
 
         FLog("DoInitStuff end");
@@ -317,6 +334,7 @@ extern "C" {
         std::strncpy(pSettings->Get().szNickName, nickname_char,
                      sizeof(pSettings->Get().szNickName) - 1);
         pSettings->Get().szNickName[sizeof(pSettings->Get().szNickName) - 1] = '\0';
+        FLog("Server connection requested by app: %s:%d", host_char, static_cast<int>(port));
         pNetGame = new CNetGame(
                 host_char,
                 port,

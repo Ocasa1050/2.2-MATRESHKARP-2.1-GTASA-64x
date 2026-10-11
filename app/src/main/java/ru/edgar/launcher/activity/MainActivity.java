@@ -167,8 +167,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        onRequestPermissions();
-
         /*if (PermissionUtils.hasPermissions(this)) {
             try {
                 //startTimer(); mHandler.postDelayed(new AnimClose(), 7800);
@@ -344,6 +342,7 @@ public class MainActivity extends AppCompatActivity {
         System.out.println(hexColor);
         System.out.println(Color.parseColor("#4D5B61"));*/
         splashFragment.show();
+        onRequestPermissions();
     }
     public native void edgarBan();
     public class onDes implements View.OnClickListener{
@@ -402,15 +401,30 @@ public class MainActivity extends AppCompatActivity {
 
     public void onRequestPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_DENIED  //|| checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_DENIED
-                    || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_DENIED || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_DENIED) {
+            boolean canReadStorage = checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+            boolean canWriteStorage = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+            boolean canRecordAudio = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            CrashLogManager.recordEvent(this, "permissions.check readStorage=" + canReadStorage
+                    + " writeStorage=" + canWriteStorage
+                    + " recordAudio=" + canRecordAudio
+                    + " apiReady=" + sApi);
+
+            if (!canReadStorage || !canWriteStorage || !canRecordAudio) {
+                CrashLogManager.recordEvent(this, "permissions.requested runtime storage and microphone permissions");
                 requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.ACCESS_NOTIFICATION_POLICY, Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.RECORD_AUDIO/*Manifest.permission.READ_CONTACTS*/}, 1);
             } else {
                 isPermissions = true;
-                if(sApi /*&& isPermissions*/) {
+                if (sApi) {
+                    CrashLogManager.recordEvent(this, "permissions.granted; opening launcher");
+                    if (splashFragment == null || mainFragment == null) {
+                        CrashLogManager.recordEvent(this, "permissions.granted but launcher fragments are not initialized");
+                        return;
+                    }
                     splashFragment.hide();
                     mainFragment.upServerId();
                     mHandler.postDelayed(new MainOpen(), 300L);
+                } else {
+                    CrashLogManager.recordEvent(this, "permissions.granted; waiting for launcher API");
                 }
             }
         }
@@ -429,9 +443,27 @@ public class MainActivity extends AppCompatActivity {
 
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        switch (requestCode) {
-            // other 'case' lines to check for other
-            // permissions this app might request
+        if (requestCode == 1) {
+            StringBuilder result = new StringBuilder("permissions.result");
+            if (permissions != null && grantResults != null) {
+                for (int i = 0; i < permissions.length && i < grantResults.length; i++) {
+                    result.append(' ').append(permissions[i]).append('=')
+                            .append(grantResults[i] == PackageManager.PERMISSION_GRANTED ? "granted" : "denied");
+                }
+            }
+            CrashLogManager.recordEvent(this, result.toString());
+
+            boolean canReadStorage = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                    || checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+            boolean canWriteStorage = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                    || checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+            boolean canRecordAudio = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                    || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            if (canReadStorage && canWriteStorage && canRecordAudio) {
+                onRequestPermissions();
+            } else {
+                CrashLogManager.recordEvent(this, "permissions.incomplete; launcher remains on splash screen");
+            }
         }
     }
 

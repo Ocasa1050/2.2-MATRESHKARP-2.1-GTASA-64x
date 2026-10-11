@@ -1,4 +1,5 @@
 #include <GLES2/gl2.h>
+#include <strings.h>
 #include "../main.h"
 #include "../vendor/armhook/patch.h"
 #include "game.h"
@@ -1564,83 +1565,113 @@ struct stFile
     FILE *f;
 };
 
-char lastFile[123];
+char lastFile[512] = {0};
+char lastResolvedFile[512] = {0};
+
+static bool IsSceneDataPath(const char* path)
+{
+    if (path == nullptr)
+        return false;
+
+    const char* extension = strrchr(path, '.');
+    if (extension == nullptr)
+        return false;
+
+    return strcasecmp(extension, ".dat") == 0
+            || strcasecmp(extension, ".ide") == 0
+            || strcasecmp(extension, ".ipl") == 0
+            || strcasecmp(extension, ".img") == 0;
+}
 
 stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 {
-    strcpy(lastFile, r1);
+    if (r1 == nullptr || g_pszStorage == nullptr)
+    {
+        FLog("NVFOpen hook | invalid input (requested=%s, storage=%s)",
+                r1 == nullptr ? "(null)" : r1,
+                g_pszStorage == nullptr ? "(null)" : g_pszStorage);
+        return nullptr;
+    }
 
-    static char path[255]{};
-    memset(path, 0, sizeof(path));
+    snprintf(lastFile, sizeof(lastFile), "%s", r1);
 
-    sprintf(path, "%s%s", g_pszStorage, r1);
+    char path[1024] = {0};
+
+    const int basePathLength = snprintf(path, sizeof(path), "%s%s", g_pszStorage, r1);
+    if (basePathLength < 0 || basePathLength >= static_cast<int>(sizeof(path)))
+    {
+        FLog("NVFOpen hook | requested path is too long (%s)", r1);
+        return nullptr;
+    }
 
     // ----------------------------
-    if(!strncmp(r1+12, "mainV1.scm", 10))
+    if(strlen(r1) > 12 && !strncmp(r1 + 12, "mainV1.scm", 10))
     {
-        sprintf(path, "%sSPACE/main.scm", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/main.scm", g_pszStorage);
         FLog("Loading %s", path);
     }
     // ----------------------------
-    if(!strncmp(r1+12, "SCRIPTV1.IMG", 12))
+    if(strlen(r1) > 12 && !strncmp(r1 + 12, "SCRIPTV1.IMG", 12))
     {
-        sprintf(path, "%sSPACE/script.img", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/script.img", g_pszStorage);
         FLog("Loading script.img..");
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/PEDS.IDE", 13))
     {
-        sprintf(path, "%sSPACE/peds.ide", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/peds.ide", g_pszStorage);
         FLog("Loading peds.ide..");
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/VEHICLES.IDE", 17))
     {
-        sprintf(path, "%sSPACE/vehicles.ide", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/vehicles.ide", g_pszStorage);
         FLog("Loading vehicles.ide..");
     }
 
     if (!strncmp(r1, "DATA/GTA.DAT", 12))
     {
-        sprintf(path, "%sSPACE/gta.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/gta.dat", g_pszStorage);
         FLog("Loading gta.dat..");
     }
 
     if (!strncmp(r1, "DATA/HANDLING.CFG", 17))
     {
-        sprintf(path, "%sSPACE/handling.cfg", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/handling.cfg", g_pszStorage);
         FLog("Loading handling.cfg..");
     }
 
     if (!strncmp(r1, "DATA/WEAPON.DAT", 15))
     {
-        sprintf(path, "%sSPACE/weapon.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSPACE/weapon.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
     }
 
     if (!strncmp(r1, "DATA/FONTS.DAT", 15))
     {
-        sprintf(path, "%sdata/fonts.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sdata/fonts.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
     }
 
     if (!strncmp(r1, "DATA/PEDSTATS.DAT", 15))
     {
-        sprintf(path, "%sdata/pedstats.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sdata/pedstats.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
     }
 
     if (!strncmp(r1, "DATA/TIMECYC.DAT", 15))
     {
-        sprintf(path, "%sdata/timecyc.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sdata/timecyc.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
     }
 
     if (!strncmp(r1, "DATA/POPCYCLE.DAT", 15))
     {
-        sprintf(path, "%sdata/popcycle.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sdata/popcycle.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
     }
+
+    snprintf(lastResolvedFile, sizeof(lastResolvedFile), "%s", path);
 
 #if VER_x32
     auto *st = (stFile*)malloc(8);
@@ -1655,10 +1686,18 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     {
         st->isFileExist = true;
         st->f = f;
+        if (IsSceneDataPath(r1) || IsSceneDataPath(path))
+        {
+            FLog("Scene data opened | requested=%s | resolved=%s", r1, path);
+        }
         return st;
     }
     else
     {
+        if (IsSceneDataPath(r1) || IsSceneDataPath(path))
+        {
+            FLog("Scene data open failed | requested=%s | resolved=%s", r1, path);
+        }
         FLog("NVFOpen hook | Error: file not found (%s)", path);
         free(st);
         return nullptr;
