@@ -89,6 +89,16 @@ public class SpawnMenu {
         InterfacesManager.getInterfacesManager().AnimVisibale(viewGroup, View.VISIBLE);
     }
 
+    public void autoSelectDefaultSpawn() {
+        if (viewGroup != null) {
+            viewGroup.animate().cancel();
+            viewGroup.setVisibility(View.GONE);
+            viewGroup.setAlpha(1.0f);
+        }
+        // Match the currently highlighted default menu item without showing the menu.
+        spawm(1);
+    }
+
     public void HideSpawnMenu() {
         InterfacesManager.getInterfacesManager().AnimVisibale(viewGroup, View.GONE);
     }

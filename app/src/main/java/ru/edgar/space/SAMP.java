@@ -467,7 +467,16 @@ public class SAMP extends GTASA implements HeightProvider.HeightListener {
         });
     }
 
-    public void showSpawnMenu() { runOnUiThread(() -> { InterfacesManager.getInterfacesManager().getSpawnMenu().ShowSpawnMenu(); } ); }
+    public void showSpawnMenu() {
+        runOnUiThread(() -> {
+            InterfacesManager interfacesManager = InterfacesManager.getInterfacesManager();
+            if (interfacesManager == null || interfacesManager.getSpawnMenu() == null) {
+                Log.e(TAG, "Cannot auto-select spawn: spawn menu is not initialized");
+                return;
+            }
+            interfacesManager.getSpawnMenu().autoSelectDefaultSpawn();
+        });
+    }
 
     public void hideSpawnMenu() { runOnUiThread(() -> { InterfacesManager.getInterfacesManager().getSpawnMenu().HideSpawnMenu(); } ); }
 
